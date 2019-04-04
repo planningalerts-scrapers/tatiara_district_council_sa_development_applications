@@ -520,7 +520,7 @@ function getAddress(elements: Element[], assessmentNumberElement: Element, middl
 
 // Parses the details from the elements associated with a single development application.
 
-function parseApplicationElements(elements: Element[], startElement: Element, informationUrl: string, imageInfos: ImageInfo[]) {
+async function parseApplicationElements(elements: Element[], startElement: Element, informationUrl: string, imageInfos: ImageInfo[]) {
     let applicationNumberHeadingBounds = findTextBounds(elements, "Application No");
     let applicationDateHeadingBounds = findTextBounds(elements, "Application Date");
     let applicationReceivedHeadingBounds = findTextBounds(elements, "Application received");
@@ -554,7 +554,7 @@ function parseApplicationElements(elements: Element[], startElement: Element, in
         height: applicationNumberHeadingBounds.height
     };
 
-    composeImage(imageInfos, applicationNumberBounds);
+    await composeImage(imageInfos, applicationNumberBounds);
 
     let applicationNumber = elements.filter(element => getPercentageOfElementInRectangle(element, applicationNumberBounds) > 90).map(element => element.text).join("").replace(/\s/g, "");
     if (applicationNumber === undefined || applicationNumber === "") {
@@ -593,7 +593,7 @@ function parseApplicationElements(elements: Element[], startElement: Element, in
             height: (privateCertifierNameHeadingBounds == undefined) ? 2 * developmentDescriptionHeadingBounds.height : privateCertifierNameHeadingBounds.y - developmentDescriptionHeadingBounds.y - developmentDescriptionHeadingBounds.height
         };
         description = elements.filter(element => getPercentageOfElementInRectangle(element, descriptionBounds) > 90).map(element => element.text).join(" ");
-        composeImage(imageInfos, descriptionBounds);
+        await composeImage(imageInfos, descriptionBounds);
     }
 
 
@@ -660,7 +660,7 @@ function parseApplicationElements(elements: Element[], startElement: Element, in
             height: streetHeadingBounds.height + 2 * Tolerance
         };
         street = elements.filter(element => getPercentageOfElementInRectangle(element, streetBounds) > 90).map(element => element.text).join(" ");
-        composeImage(imageInfos, streetBounds);
+        await composeImage(imageInfos, streetBounds);
     }
 
     // Get the suburb.
@@ -1431,7 +1431,7 @@ console.log("Only parsing page 1.");
         // the database later instead of being ignored).
 
         for (let applicationElementGroup of applicationElementGroups) {
-            let developmentApplication = parseApplicationElements(applicationElementGroup.elements, applicationElementGroup.startElement, url, imageInfos);
+            let developmentApplication = await parseApplicationElements(applicationElementGroup.elements, applicationElementGroup.startElement, url, imageInfos);
             if (developmentApplication !== undefined) {
                 let suffix = 0;
                 let applicationNumber = developmentApplication.applicationNumber;

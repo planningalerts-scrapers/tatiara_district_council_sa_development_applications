@@ -99,6 +99,13 @@ interface Element extends Rectangle {
     confidence: number
 }
 
+// An image and its bounding rectangle.
+
+interface ImageInfo {
+    image: any,
+    bounds: Rectangle
+}
+
 // Gets the highest Y co-ordinate of all elements that are considered to be in the same row as
 // the specified element.  Take care to avoid extremely tall elements (because these may otherwise
 // be considered as part of all rows and effectively force the return value of this function to
@@ -513,13 +520,24 @@ function getAddress(elements: Element[], assessmentNumberElement: Element, middl
 
 // Parses the details from the elements associated with a single development application.
 
-function parseApplicationElements(elements: Element[], startElement: Element, informationUrl: string) {
+function parseApplicationElements(elements: Element[], startElement: Element, informationUrl: string, imageInfos: ImageInfo[]) {
     let applicationNumberHeadingBounds = findTextBounds(elements, "Application No");
     let applicationDateHeadingBounds = findTextBounds(elements, "Application Date");
+    let applicationReceivedHeadingBounds = findTextBounds(elements, "Application received");
     let planningApprovalHeadingBounds = findTextBounds(elements, "Planning Approval");
     let developmentDescriptionHeadingBounds = findTextBounds(elements, "Development Description");
     let privateCertifierNameHeadingBounds = findTextBounds(elements, "Private Certifier Name");
     let relevantAuthorityHeadingBounds = findTextBounds(elements, "Relevant Authority");
+    let propertyHouseNumberHeadingBounds = findTextBounds(elements, "Property House No");
+    let lotHeadingBounds = findTextBounds(elements, "Lot");
+    let sectionHeadingBounds = findTextBounds(elements, "Section");
+    let planHeadingBounds = findTextBounds(elements, "Plan");
+    let streetHeadingBounds = findTextBounds(elements, "Street");
+    let suburbHeadingBounds = findTextBounds(elements, "Suburb");
+    let titleHeadingBounds = findTextBounds(elements, "Title");
+    let hundredHeadingBounds = findTextBounds(elements, "Hundred");
+    
+    let rightBounds = (relevantAuthorityHeadingBounds === undefined) ? applicationDateHeadingBounds : relevantAuthorityHeadingBounds;
 
     // Get the application number.
 
@@ -536,6 +554,8 @@ function parseApplicationElements(elements: Element[], startElement: Element, in
         height: applicationNumberHeadingBounds.height
     };
 
+    composeImage(imageInfos, applicationNumberBounds);
+
     let applicationNumber = elements.filter(element => getPercentageOfElementInRectangle(element, applicationNumberBounds) > 90).map(element => element.text).join("").replace(/\s/g, "");
     if (applicationNumber === undefined || applicationNumber === "") {
         let elementSummary = elements.map(element => `[${element.text}]`).join("");
@@ -543,7 +563,7 @@ function parseApplicationElements(elements: Element[], startElement: Element, in
         return undefined;
     }
 
-    applicationNumber = applicationNumber.replace(/[IlL\[\]\|’,!\(\)\{\}]/g, "/").replace(/°/g, "0").replace(/'\//g, "1").replace(/\/\//g, "1/").replace(/201\?/g, "2017").replace(/‘/g, "").replace(/'/g, "").replace(/O/g, "0");  // for example, converts "17I2017" to "17/2017"
+    applicationNumber = applicationNumber.replace(/[IlL\[\]\|’,!\(\)\{\}]/g, "/").replace(/°/g, "0").replace(/'\//g, "1").replace(/\/\//g, "1/").replace(/201\?/g, "2017").replace(/‘/g, "").replace(/'/g, "").replace(/O/g, "0").replace(/“8$/g, "/18");  // for example, converts "17I2017" to "17/2017"
     console.log(`    Found \"${applicationNumber}\".`);
 
     // Get the received date.
@@ -554,7 +574,7 @@ function parseApplicationElements(elements: Element[], startElement: Element, in
             x: applicationDateHeadingBounds.x + applicationDateHeadingBounds.width,
             y: applicationDateHeadingBounds.y,
             width: (planningApprovalHeadingBounds === undefined) ? applicationDateHeadingBounds.width : (planningApprovalHeadingBounds.x - applicationDateHeadingBounds.x - applicationDateHeadingBounds.width),
-            height: applicationDateHeadingBounds.height
+            height: (applicationReceivedHeadingBounds === undefined) ? applicationDateHeadingBounds.height : (applicationReceivedHeadingBounds.y - applicationDateHeadingBounds.y)
         };
 
         let receivedDateText = elements.filter(element => getPercentageOfElementInRectangle(element, receivedDateBounds) > 90).map(element => element.text).join("").replace(/\s/g, "");
@@ -566,75 +586,146 @@ function parseApplicationElements(elements: Element[], startElement: Element, in
 
     let description = "";
     if (developmentDescriptionHeadingBounds !== undefined) {
-        let rightBounds = (relevantAuthorityHeadingBounds === undefined) ? applicationDateHeadingBounds : relevantAuthorityHeadingBounds;
-
         let descriptionBounds = {
             x: developmentDescriptionHeadingBounds.x,
             y: developmentDescriptionHeadingBounds.y + developmentDescriptionHeadingBounds.height,
             width: (rightBounds === undefined) ? 3 * developmentDescriptionHeadingBounds.width : (rightBounds.x - applicationNumberHeadingBounds.x),
             height: (privateCertifierNameHeadingBounds == undefined) ? 2 * developmentDescriptionHeadingBounds.height : privateCertifierNameHeadingBounds.y - developmentDescriptionHeadingBounds.y - developmentDescriptionHeadingBounds.height
         };
-    
         description = elements.filter(element => getPercentageOfElementInRectangle(element, descriptionBounds) > 90).map(element => element.text).join(" ");
+        composeImage(imageInfos, descriptionBounds);
     }
 
-    // Find the "Assessment No" text.
 
-    let assessmentNumberElement = getAssessmentNumberElement(elements, startElement);
-    if (assessmentNumberElement === undefined) {
-        let elementSummary = elements.map(element => `[${element.text}]`).join("");
-        console.log(`Could not find the \"Assessment No\" text on the PDF page for the current development application.  The development application will be ignored.  Elements: ${elementSummary}`);
-        return undefined;
+    // Get the house number.
+
+    let houseNumber = "";
+    if (propertyHouseNumberHeadingBounds !== undefined) {
+        let houseNumberBounds = {
+            x: propertyHouseNumberHeadingBounds.x + propertyHouseNumberHeadingBounds.width,
+            y: propertyHouseNumberHeadingBounds.y,
+            width: (rightBounds === undefined) ? 3 * propertyHouseNumberHeadingBounds.width : (rightBounds.x - propertyHouseNumberHeadingBounds.x - propertyHouseNumberHeadingBounds.width),
+            height: propertyHouseNumberHeadingBounds.height
+        };
+        houseNumber = elements.filter(element => getPercentageOfElementInRectangle(element, houseNumberBounds) > 90).map(element => element.text).join(" ");
     }
 
-    // Find the "Applicant" text (a useful reference point).
+    // Get the lot.
 
-    let applicantElement = elements.find(element =>
-        element.y > startElement.y &&
-        didYouMean(element.text, [ "Applicant" ], { caseSensitive: true, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 3, trimSpaces: true }) !== null);
-
-    // Find the "Builder" text (a useful reference point).
-
-    let builderElement = elements.find(element =>
-        element.y > startElement.y &&
-        didYouMean(element.text, [ "Builder" ], { caseSensitive: true, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 3, trimSpaces: true }) !== null);
-
-    // One of either the applicant or builder elements is required in order to determine where
-    // the description text starts on the X axis (and where the development application number
-    // and address end on the X axis).
-
-    let middleElement = (applicantElement === undefined) ? builderElement : applicantElement;
-    if (middleElement === undefined) {
-        let elementSummary = elements.map(element => `[${element.text}]`).join("");
-        console.log(`Could not find the \"Applicant\" or \"Builder\" text on the PDF page for the current development application.  The development application will be ignored.  Elements: ${elementSummary}`);
-        return undefined;
+    let lot = "";
+    if (lotHeadingBounds !== undefined) {
+        let lotBounds = {
+            x: lotHeadingBounds.x + lotHeadingBounds.width,
+            y: lotHeadingBounds.y - Tolerance,
+            width: (rightBounds === undefined) ? 10 * lotHeadingBounds.width : (rightBounds.x - lotHeadingBounds.x - lotHeadingBounds.width),
+            height: lotHeadingBounds.height + 2 * Tolerance
+        };
+        lot = elements.filter(element => getPercentageOfElementInRectangle(element, lotBounds) > 90).map(element => element.text).join(" ");
     }
 
-    // let applicationNumber = getRightRowText(elements, startElement, middleElement).trim().replace(/\s/g, "");
-    // applicationNumber = applicationNumber.replace(/[IlL\[\]\|’,!\(\)\{\}]/g, "/").replace(/°/g, "0").replace(/'\//g, "1").replace(/\/\//g, "1/").replace(/201\?/g, "2017").replace(/‘/g, "").replace(/'/g, "");  // for example, converts "17I2017" to "17/2017"
-    // if (applicationNumber.length >= 6 && /120[0-9][0-9]$/.test(applicationNumber))
-    //     applicationNumber = applicationNumber.substring(0, applicationNumber.length - 5) + "/" + applicationNumber.substring(applicationNumber.length - 4);  // for example, converts "35612015" to "356/2015"
-    //
-    // Get the received date.
-    //
-    // let receivedDate: moment.Moment = undefined;
-    // let receivedDateElement = getReceivedDateElement(elements, startElement, middleElement);
-    // if (receivedDateElement !== undefined)
-    //     receivedDate = moment(receivedDateElement.text.trim(), "D/MM/YYYY", true);
-    //
-    // Get the description.
-    //
-    // let description = getDescription(elements, startElement, middleElement, receivedDateElement);
-    // let description = "";
+    // Get the section.
 
-    // Get the address.
+    let section = "";
+    if (sectionHeadingBounds !== undefined) {
+        let sectionBounds = {
+            x: sectionHeadingBounds.x + sectionHeadingBounds.width,
+            y: sectionHeadingBounds.y - Tolerance,
+            width: (rightBounds === undefined) ? 10 * sectionHeadingBounds.width : (rightBounds.x - sectionHeadingBounds.x - sectionHeadingBounds.width),
+            height: sectionHeadingBounds.height + 2 * Tolerance
+        };
+        section = elements.filter(element => getPercentageOfElementInRectangle(element, sectionBounds) > 90).map(element => element.text).join(" ");
+    }
 
-    let { address, legalDescription } = getAddress(elements, assessmentNumberElement, middleElement);
+    // Get the plan.
+
+    let plan = "";
+    if (planHeadingBounds !== undefined) {
+        let planBounds = {
+            x: planHeadingBounds.x + planHeadingBounds.width,
+            y: planHeadingBounds.y - Tolerance,
+            width: (rightBounds === undefined) ? 10 * planHeadingBounds.width : (rightBounds.x - planHeadingBounds.x - planHeadingBounds.width),
+            height: planHeadingBounds.height + 2 * Tolerance
+        };
+        plan = elements.filter(element => getPercentageOfElementInRectangle(element, planBounds) > 90).map(element => element.text).join(" ");
+    }
+
+    // Get the street.
+
+    let street = "";
+    if (streetHeadingBounds !== undefined) {
+        let streetBounds = {
+            x: streetHeadingBounds.x + streetHeadingBounds.width,
+            y: streetHeadingBounds.y - Tolerance,
+            width: (rightBounds === undefined) ? 3 * streetHeadingBounds.width : (rightBounds.x - streetHeadingBounds.x - streetHeadingBounds.width),
+            height: streetHeadingBounds.height + 2 * Tolerance
+        };
+        street = elements.filter(element => getPercentageOfElementInRectangle(element, streetBounds) > 90).map(element => element.text).join(" ");
+        composeImage(imageInfos, streetBounds);
+    }
+
+
+    // Get the suburb.
+
+    let suburb = "";
+    if (suburbHeadingBounds !== undefined) {
+        let suburbBounds = {
+            x: suburbHeadingBounds.x + suburbHeadingBounds.width,
+            y: suburbHeadingBounds.y - Tolerance,
+            width: (rightBounds === undefined) ? 3 * suburbHeadingBounds.width : (rightBounds.x - suburbHeadingBounds.x - suburbHeadingBounds.width),
+            height: suburbHeadingBounds.height + 2 * Tolerance
+        };
+        suburb = elements.filter(element => getPercentageOfElementInRectangle(element, suburbBounds) > 90).map(element => element.text).join(" ");
+    }
+
+    // Get the title.
+
+    let title = "";
+    if (titleHeadingBounds !== undefined) {
+        let titleBounds = {
+            x: titleHeadingBounds.x + titleHeadingBounds.width,
+            y: titleHeadingBounds.y - Tolerance,
+            width: (rightBounds === undefined) ? 10 * titleHeadingBounds.width : (rightBounds.x - titleHeadingBounds.x - titleHeadingBounds.width),
+            height: titleHeadingBounds.height + 2 * Tolerance
+        };
+        title = elements.filter(element => getPercentageOfElementInRectangle(element, titleBounds) > 90).map(element => element.text).join(" ");
+    }
+
+    // Get the hundred.
+
+    let hundred = "";
+    if (hundredHeadingBounds !== undefined) {
+        let hundredBounds = {
+            x: hundredHeadingBounds.x + hundredHeadingBounds.width,
+            y: hundredHeadingBounds.y - Tolerance,
+            width: (rightBounds === undefined) ? 5 * hundredHeadingBounds.width : (rightBounds.x - hundredHeadingBounds.x - hundredHeadingBounds.width),
+            height: hundredHeadingBounds.height + 2 * Tolerance
+        };
+        hundred = elements.filter(element => getPercentageOfElementInRectangle(element, hundredBounds) > 90).map(element => element.text).join(" ");
+    }
+
+    // Construct the address.
+    
+    let address = `${houseNumber} ${street}, ${suburb}`;
     if (address === undefined) {
         let elementSummary = elements.map(element => `[${element.text}]`).join("");
-        console.log(`Application number ${applicationNumber} will be ignored because an address was not found or parsed (searching upwards from the "Assessment Number" or "Asses Num" text).  Elements: ${elementSummary}`);
+        console.log(`Application number ${applicationNumber} will be ignored because an address was not found or parsed.  Elements: ${elementSummary}`);
         return undefined;
     }
+
+    // Construct the legal description.
+
+    let legalDescriptionElements = [];
+    if (lot !== "")
+        legalDescriptionElements.push(`Lot ${lot}`);
+    if (section !== "")
+        legalDescriptionElements.push(`Section ${section}`);
+    if (plan !== "")
+        legalDescriptionElements.push(`Plan ${plan}`);
+    if (title !== "")
+        legalDescriptionElements.push(`Title ${title}`);
+    if (hundred !== "")
+        legalDescriptionElements.push(`Hundred ${hundred}`);
+    let legalDescription = legalDescriptionElements.join(", ");
 
     return {
         applicationNumber: applicationNumber,
@@ -975,13 +1066,120 @@ function convertToJimpImage(image: any) {
     return jimpImage;
 }
 
+// Converts image data from the PDF to a jimp format image.
+
+function convertToJimpSubImage(image: any) {
+    let pixelSize = (8 * image.data.length) / (image.width * image.height);
+    let jimpImage = null;
+
+    if (pixelSize === 1) {
+        // A monochrome image (one bit per pixel).
+
+        jimpImage = new (jimp as any)(image.width, image.height);
+        for (let x = 0; x < image.width; x++) {
+            for (let y = 0; y < image.height; y++) {
+                let index = y * (image.width / 8);
+                let bitIndex = x % 8;
+                let byteIndex = (x - bitIndex) / 8;
+                index += byteIndex;
+                let color = null;
+                if ((image.data[index] & (128 >> bitIndex)) === 0)
+                    color = jimp.rgbaToInt(0, 0, 0, 255);  // black pixel
+                else
+                    color = jimp.rgbaToInt(255, 255, 255, 255);  // white pixel
+                jimpImage.setPixelColor(color, x, y);
+            }
+        }
+    } else {
+        // Assume a 24 bit colour image (3 bytes per pixel).
+
+        jimpImage = new (jimp as any)(image.width, image.height);
+        for (let x = 0; x < image.width; x++) {
+            for (let y = 0; y < image.height; y++) {
+                let index = (y * image.width * 3) + (x * 3);
+                let color = jimp.rgbaToInt(image.data[index], image.data[index + 1], image.data[index + 2], 255);
+                jimpImage.setPixelColor(color, x, y);
+            }
+        }
+    }
+
+    return jimpImage;
+}
+
+// Parses a sub-image (from a PDF document).
+
+let imageCount = 0;
+
+async function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle) {
+    let jimpCompositeImage = new (jimp as any)(compositeImageBounds.width, compositeImageBounds.height);
+
+console.log("Fill image with white.");
+
+    // Find all images that intersect the specified bounds.
+
+    for (let imageInfo of imageInfos) {
+        let image = imageInfo.image;
+        let imageBounds = imageInfo.bounds;
+        let intersectingBounds = intersect(imageBounds, compositeImageBounds);
+        if (getArea(intersectingBounds) <= 0)
+            continue;
+
+        let pixelSize = (8 * image.data.length) / (image.width * image.height);
+    console.log(`pixelSize=${pixelSize}`);
+        if (pixelSize === 1) {
+            // A monochrome image (one bit per pixel).
+            for (let x = 0; x < intersectingBounds.width; x++) {
+                for (let y = 0; y < intersectingBounds.height; y++) {
+                    let imageX = intersectingBounds.x - imageBounds.x + x;
+                    let imageY = intersectingBounds.y - imageBounds.y + y;
+
+                    let index = imageY * (image.width / 8);
+                    let bitIndex = imageX % 8;
+                    let byteIndex = (imageX - bitIndex) / 8;
+                    index += byteIndex;
+                    let color = null;
+                    if ((image.data[index] & (128 >> bitIndex)) === 0)
+                        color = jimp.rgbaToInt(0, 0, 0, 255);  // black pixel
+                    else
+                        color = jimp.rgbaToInt(255, 255, 255, 255);  // white pixel
+
+                    let compositeImageX = intersectingBounds.x - compositeImageBounds.x + x;
+                    let compositeImageY = intersectingBounds.y - compositeImageBounds.y + y;
+                    jimpCompositeImage.setPixelColor(color, compositeImageX, compositeImageY);
+                }
+            }
+        } else {
+            // Assume a 24 bit colour image (3 bytes per pixel).
+    
+            for (let x = 0; x < intersectingBounds.width; x++) {
+                for (let y = 0; y < intersectingBounds.height; y++) {
+                    let imageX = intersectingBounds.x - imageBounds.x + x;
+                    let imageY = intersectingBounds.y - imageBounds.y + y;
+
+let color = undefined;
+                    let index = (imageY * image.width * 3) + (imageX * 3);
+try {
+                    color = jimp.rgbaToInt(image.data[index], image.data[index + 1], image.data[index + 2], 255);
+                    let compositeImageX = intersectingBounds.x - compositeImageBounds.x + x;
+                    let compositeImageY = intersectingBounds.y - compositeImageBounds.y + y;
+                    jimpCompositeImage.setPixelColor(color, compositeImageX, compositeImageY);
+} catch {
+    console.log(`color=${color} imageY=${imageY}, imageX=${imageX} (image.width=${image.width} and imageBounds.width=${imageBounds.width} image.data[index]=${image.data[index]})`);
+}                    
+                }
+            }
+        }
+    }
+
+    jimpCompositeImage.write(`C:\\Temp\\Tatiara\\Image.${imageCount}.png`);
+    imageCount++;
+}
+
 // Parses an image (from a PDF document).
 
 async function parseImage(image: any, bounds: Rectangle) {
     // Convert the image data into a format that can be used by jimp and then segment the image
     // based on blocks of white.
-
-console.log(`Parsing image: ${bounds.x}, ${bounds.y}, ${bounds.width}, ${bounds.height}`);
 
     let segments = segmentImage(convertToJimpImage(image));
     if (global.gc)
@@ -1012,7 +1210,20 @@ console.log(`Parsing image: ${bounds.x}, ${bounds.y}, ${bounds.width}, ${bounds.
         // Note that textord_old_baselines is set to 0 so that text that is offset by half the
         // height of the the font is correctly recognised.
 
-        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { textord_old_baselines: "0" }).then(function(result) { resolve(result); }) });
+         let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { textord_old_baselines: "0" }).then(function(result) { resolve(result); }) });
+
+// console.log("Trying without textord_old_baselines.");
+// Not too bad, got "i140 VICTORlADGREEN, BORDERTOWNuBORDERTOWN" ... maybe due to no dawg and no dict        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { textord_old_baselines: "0", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0", crunch_leave_uc_strings: "50", crunch_leave_lc_strings: "50", tessedit_char_whitelist: " \"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" }).then(function(result) { resolve(result); }) });
+// Not too bad, got "i140 VICTORIAﬂGREEN, BORDERTOWNuBORDERTOWN" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
+//        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { language_model_penalty_case: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0", segment_penalty_dict_nonword: "0", segment_penalty_garbage: "0", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0" }).then(function(result) { resolve(result); }) });
+// Fine, probably best! (without enable_new_reg ... )        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { textord_old_baselines: "0", language_model_penalty_case: "0", enable_new_segsearch: "1" }).then(function(result) { resolve(result); }) });
+// Worse: "i140 VICTORlADGREEN, BORDERTOWNuBORDERTOWN" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { enable_new_segsearch: "1", textord_old_baselines: "0", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0", crunch_leave_uc_strings: "50", crunch_leave_lc_strings: "50", tessedit_char_whitelist: " \"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" }).then(function(result) { resolve(result); }) });
+// Good: let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { language_model_penalty_case: "0" }).then(function(result) { resolve(result); }) });
+// Pretty Good, Maybe Best: "1u1 GLANVlLLEuGLANVILLE AVENUE'L‘IA, KEITHUKElTH"" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
+// This was brilliant (ie. using German): "1ü1 GLANVILLEÜGLANVILLE AVENUEÜA, KEITHÜKEITH" and "ü40 VICTORIAÜGREEN, BORDERTOWNÜBORDERTOWN" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { lang: "deu", textord_max_noise_size: "4", textord_no_rejects: "1", textord_interpolating_skew: "0", oldbl_dot_error_size: "3", segsearch_max_futile_classifications: "40", noise_maxperblob: "16", language_model_penalty_script: "0", edges_use_new_outline_complexity: "1", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "1", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
+//        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { lang: "deu", textord_max_noise_size: "4", textord_no_rejects: "1", textord_interpolating_skew: "0", oldbl_dot_error_size: "3", segsearch_max_futile_classifications: "40", noise_maxperblob: "16", language_model_penalty_script: "0", edges_use_new_outline_complexity: "1", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "1", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
+// let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { lang: "deu" }).then(function(result) { resolve(result); }) });
+
         tesseract.terminate();
         if (global.gc)
             global.gc();
@@ -1055,10 +1266,10 @@ async function parsePdf(url: string) {
     // memory usage by the PDF (just calling page._destroy() on each iteration of the loop appears
     // not to be enough to release all memory used by the PDF parsing).
 
-console.log("Limiting to one page.");
+console.log("Only parsing page 1.");
 
     // for (let pageIndex = 0; pageIndex < 500; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
-    for (let pageIndex = 0; pageIndex < 1; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
+    for (let pageIndex = 0; pageIndex < 50; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
         let pdf = await pdfjs.getDocument({ data: buffer, disableFontFace: true, ignoreErrors: true });
         if (pageIndex >= pdf.numPages)
             break;
@@ -1078,11 +1289,8 @@ console.log("Limiting to one page.");
         // Find and parse any images in the current PDF page.
 
         let elements: Element[] = [];
-        let isFirstImage = true;
+        let imageInfos: ImageInfo[] = [];
 
-console.log(`Loading the elements`);
-elements = JSON.parse(fs.readFileSync(`C:\\Temp\\Tatiara\\Page1.txt`).toString());
-if (false) {
         for (let index = 0; index < operators.fnArray.length; index++) {
             if (operators.fnArray[index] !== pdfjs.OPS.paintImageXObject && operators.fnArray[index] !== pdfjs.OPS.paintImageMaskXObject)
                 continue;
@@ -1092,8 +1300,6 @@ if (false) {
             let image = operators.argsArray[index][0];
             if (typeof image === "string")
                 image = page.objs.get(image);  // get the actual image using its name
-            else
-                operators.argsArray[index][0] = undefined;  // attempt to release memory used by the image
 
             // Obtain the transform that applies to the image.  Note that the first image in the
             // PDF typically has a pdfjs.OPS.dependency element in the fnArray between it and its
@@ -1118,22 +1324,9 @@ if (false) {
                 width: image.width,
                 height: image.height
             };
-
-            // // Ignore the first image on the page as this is typically a white mask over the
-            // // entire page.  And because it is typically at a different scale (2.083333 instead
-            // // of 4.166666) then any text which is accidentally parsed will be set to the wrong
-            // // X and Y co-ordinates.  It is easier just to ignore this first image.  In one case
-            // // the text "HI:" was parsed and interfered with the "Dev App No." text resulting in
-            // // an application being missed (see page 21 of the May 2018 PDF).
-            // //
-            // // Note that some PDFs have just one image with a scale of 2.777777 (and this should
-            // // be parsed).
-            //
-            // let scaleY = image.height / transform[3];
-            // if (scaleY < 2.5 && isFirstImage && image.height >= 1000 && image.width >= 1000)
-            //     continue;
-            // isFirstImage = false;
            
+            imageInfos.push({ image: image, bounds: bounds });
+
             // Parse the text from the image.
 
             elements = elements.concat(await parseImage(image, bounds));
@@ -1147,7 +1340,6 @@ if (false) {
         await pdf.destroy();
         if (global.gc)
             global.gc();
-}
 
         // Ignore extremely low height elements (because these can be parsed as text but are
         // very unlikely to actually be text; for example see the October 2016 PDF on page 19).
@@ -1159,9 +1351,6 @@ if (false) {
 
         let elementComparer = (a, b) => (Math.abs(a.y - b.y) < Tolerance) ? ((a.x > b.x) ? 1 : ((a.x < b.x) ? -1 : 0)) : ((a.y > b.y) ? 1 : -1);
         elements.sort(elementComparer);
-
-// console.log(`Saving the elements`);
-// fs.writeFileSync(`C:\\Temp\\Tatiara\\Page1.txt`, JSON.stringify(elements));
 
         // Group the elements into sections based on where the "Application No" text starts (and
         // any other element the "Application No" elements line up with horizontally with a margin
@@ -1207,7 +1396,7 @@ if (false) {
         // the database later instead of being ignored).
 
         for (let applicationElementGroup of applicationElementGroups) {
-            let developmentApplication = parseApplicationElements(applicationElementGroup.elements, applicationElementGroup.startElement, url);
+            let developmentApplication = parseApplicationElements(applicationElementGroup.elements, applicationElementGroup.startElement, url, imageInfos);
             if (developmentApplication !== undefined) {
                 let suffix = 0;
                 let applicationNumber = developmentApplication.applicationNumber;

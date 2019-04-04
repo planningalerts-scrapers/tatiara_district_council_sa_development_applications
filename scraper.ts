@@ -663,7 +663,6 @@ function parseApplicationElements(elements: Element[], startElement: Element, in
         composeImage(imageInfos, streetBounds);
     }
 
-
     // Get the suburb.
 
     let suburb = "";
@@ -1066,44 +1065,15 @@ function convertToJimpImage(image: any) {
     return jimpImage;
 }
 
-// Converts image data from the PDF to a jimp format image.
+// Expands a rectangle so that its x, y, width and height values become integers.
 
-function convertToJimpSubImage(image: any) {
-    let pixelSize = (8 * image.data.length) / (image.width * image.height);
-    let jimpImage = null;
-
-    if (pixelSize === 1) {
-        // A monochrome image (one bit per pixel).
-
-        jimpImage = new (jimp as any)(image.width, image.height);
-        for (let x = 0; x < image.width; x++) {
-            for (let y = 0; y < image.height; y++) {
-                let index = y * (image.width / 8);
-                let bitIndex = x % 8;
-                let byteIndex = (x - bitIndex) / 8;
-                index += byteIndex;
-                let color = null;
-                if ((image.data[index] & (128 >> bitIndex)) === 0)
-                    color = jimp.rgbaToInt(0, 0, 0, 255);  // black pixel
-                else
-                    color = jimp.rgbaToInt(255, 255, 255, 255);  // white pixel
-                jimpImage.setPixelColor(color, x, y);
-            }
-        }
-    } else {
-        // Assume a 24 bit colour image (3 bytes per pixel).
-
-        jimpImage = new (jimp as any)(image.width, image.height);
-        for (let x = 0; x < image.width; x++) {
-            for (let y = 0; y < image.height; y++) {
-                let index = (y * image.width * 3) + (x * 3);
-                let color = jimp.rgbaToInt(image.data[index], image.data[index + 1], image.data[index + 2], 255);
-                jimpImage.setPixelColor(color, x, y);
-            }
-        }
+function ceiling(rectangle: Rectangle) {
+    return {
+        x: Math.floor(rectangle.x),
+        y: Math.floor(rectangle.y),
+        width: Math.ceil(rectangle.width + rectangle.x - Math.floor(rectangle.x)),
+        height: Math.ceil(rectangle.height + rectangle.y - Math.floor(rectangle.y))
     }
-
-    return jimpImage;
 }
 
 // Parses a sub-image (from a PDF document).
@@ -1111,6 +1081,7 @@ function convertToJimpSubImage(image: any) {
 let imageCount = 0;
 
 async function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle) {
+    compositeImageBounds = ceiling(compositeImageBounds);
     let jimpCompositeImage = new (jimp as any)(compositeImageBounds.width, compositeImageBounds.height);
 
 console.log("Fill image with white.");
@@ -1119,13 +1090,12 @@ console.log("Fill image with white.");
 
     for (let imageInfo of imageInfos) {
         let image = imageInfo.image;
-        let imageBounds = imageInfo.bounds;
+        let imageBounds = ceiling(imageInfo.bounds);
         let intersectingBounds = intersect(imageBounds, compositeImageBounds);
         if (getArea(intersectingBounds) <= 0)
             continue;
 
         let pixelSize = (8 * image.data.length) / (image.width * image.height);
-    console.log(`pixelSize=${pixelSize}`);
         if (pixelSize === 1) {
             // A monochrome image (one bit per pixel).
             for (let x = 0; x < intersectingBounds.width; x++) {
@@ -1156,23 +1126,88 @@ console.log("Fill image with white.");
                     let imageX = intersectingBounds.x - imageBounds.x + x;
                     let imageY = intersectingBounds.y - imageBounds.y + y;
 
-let color = undefined;
                     let index = (imageY * image.width * 3) + (imageX * 3);
-try {
-                    color = jimp.rgbaToInt(image.data[index], image.data[index + 1], image.data[index + 2], 255);
+                    let color = jimp.rgbaToInt(image.data[index], image.data[index + 1], image.data[index + 2], 255);
                     let compositeImageX = intersectingBounds.x - compositeImageBounds.x + x;
                     let compositeImageY = intersectingBounds.y - compositeImageBounds.y + y;
                     jimpCompositeImage.setPixelColor(color, compositeImageX, compositeImageY);
-} catch {
-    console.log(`color=${color} imageY=${imageY}, imageX=${imageX} (image.width=${image.width} and imageBounds.width=${imageBounds.width} image.data[index]=${image.data[index]})`);
-}                    
                 }
             }
         }
     }
 
-    jimpCompositeImage.write(`C:\\Temp\\Tatiara\\Image.${imageCount}.png`);
-    imageCount++;
+    let segments = segmentImage(jimpCompositeImage);
+    if (global.gc)
+        global.gc();
+
+imageCount++;
+console.log(`Writing image ${imageCount}`);
+jimpCompositeImage.write(`C:\\Temp\\Tatiara\\Image.${imageCount}.png`);
+
+    let elements: Element[] = [];
+    for (let segment of segments) {
+        // Scale up smaller images for better parsing.
+
+        let scaleFactor = 1.0;
+        if (segment.bounds.width * segment.bounds.height < 500 * 500) {
+            scaleFactor = 3.0;
+            console.log(`    Scaling a small image (${segment.bounds.width}×${segment.bounds.height}) by ${scaleFactor} to improve parsing.`);
+            segment.image = segment.image.scale(scaleFactor, jimp.RESIZE_BEZIER);
+        }
+
+        let imageBuffer = await new Promise((resolve, reject) => segment.image.getBuffer(jimp.MIME_PNG, (error, buffer) => error ? reject(error) : resolve(buffer)));
+        segment.image = undefined;  // attempt to release memory
+
+        // Report larger memory usage and larger images for troubleshooting purposes.
+
+        let memoryUsage = process.memoryUsage();
+        if (memoryUsage.rss > 200 * 1024 * 1024)  // 200 MB
+            console.log(`    Memory Usage: rss: ${Math.round(memoryUsage.rss / (1024 * 1024))} MB, heapTotal: ${Math.round(memoryUsage.heapTotal / (1024 * 1024))} MB, heapUsed: ${Math.round(memoryUsage.heapUsed / (1024 * 1024))} MB, external: ${Math.round(memoryUsage.external / (1024 * 1024))} MB`);
+        if (segment.bounds.width * segment.bounds.height > 700 * 700)
+            console.log(`    Parsing a large image with bounds { x: ${Math.round(segment.bounds.x)}, y: ${Math.round(segment.bounds.y)}, width: ${Math.round(segment.bounds.width)}, height: ${Math.round(segment.bounds.height)} }.`);
+
+        // Note that textord_old_baselines is set to 0 so that text that is offset by half the
+        // height of the the font is correctly recognised.
+
+        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { textord_old_baselines: "0" }).then(function(result) { resolve(result); }) });
+
+// console.log("Trying without textord_old_baselines.");
+// Not too bad, got "i140 VICTORlADGREEN, BORDERTOWNuBORDERTOWN" ... maybe due to no dawg and no dict        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { textord_old_baselines: "0", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0", crunch_leave_uc_strings: "50", crunch_leave_lc_strings: "50", tessedit_char_whitelist: " \"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" }).then(function(result) { resolve(result); }) });
+// Not too bad, got "i140 VICTORIAﬂGREEN, BORDERTOWNuBORDERTOWN" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
+//        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { language_model_penalty_case: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0", segment_penalty_dict_nonword: "0", segment_penalty_garbage: "0", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0" }).then(function(result) { resolve(result); }) });
+// Fine, probably best! (without enable_new_reg ... )        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { textord_old_baselines: "0", language_model_penalty_case: "0", enable_new_segsearch: "1" }).then(function(result) { resolve(result); }) });
+// Worse: "i140 VICTORlADGREEN, BORDERTOWNuBORDERTOWN" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { enable_new_segsearch: "1", textord_old_baselines: "0", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0", crunch_leave_uc_strings: "50", crunch_leave_lc_strings: "50", tessedit_char_whitelist: " \"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" }).then(function(result) { resolve(result); }) });
+// Good: let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { language_model_penalty_case: "0" }).then(function(result) { resolve(result); }) });
+// Pretty Good, Maybe Best: "1u1 GLANVlLLEuGLANVILLE AVENUE'L‘IA, KEITHUKElTH"" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
+// This was brilliant (ie. using German): "1ü1 GLANVILLEÜGLANVILLE AVENUEÜA, KEITHÜKEITH" and "ü40 VICTORIAÜGREEN, BORDERTOWNÜBORDERTOWN" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { lang: "deu", textord_max_noise_size: "4", textord_no_rejects: "1", textord_interpolating_skew: "0", oldbl_dot_error_size: "3", segsearch_max_futile_classifications: "40", noise_maxperblob: "16", language_model_penalty_script: "0", edges_use_new_outline_complexity: "1", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "1", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
+//        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { lang: "deu", textord_max_noise_size: "4", textord_no_rejects: "1", textord_interpolating_skew: "0", oldbl_dot_error_size: "3", segsearch_max_futile_classifications: "40", noise_maxperblob: "16", language_model_penalty_script: "0", edges_use_new_outline_complexity: "1", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "1", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
+// let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { lang: "deu" }).then(function(result) { resolve(result); }) });
+
+        tesseract.terminate();
+        if (global.gc)
+            global.gc();
+
+        // Simplify the lines (remove most of the information generated by tesseract.js).
+
+        if (result && result.blocks && result.blocks.length)
+            for (let block of result.blocks)
+                for (let paragraph of block.paragraphs)
+                    for (let line of paragraph.lines)
+                        elements = elements.concat(line.words.map(word => {
+                            return {
+                                text: word.text,
+                                confidence: word.confidence,
+                                choiceCount: word.choices.length,
+                                x: compositeImageBounds.x + segment.bounds.x + word.bbox.x0 / scaleFactor,
+                                y: compositeImageBounds.y + segment.bounds.y + word.bbox.y0 / scaleFactor,
+                                width: (word.bbox.x1 - word.bbox.x0) / scaleFactor,
+                                height: (word.bbox.y1 - word.bbox.y0) / scaleFactor
+                            };
+                        }));
+    }
+
+    console.log(`Writing text for ${imageCount}`);
+    fs.writeFileSync(`C:\\Temp\\Tatiara\\Image.${imageCount}.txt`, JSON.stringify(elements));
 }
 
 // Parses an image (from a PDF document).

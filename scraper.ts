@@ -35,11 +35,12 @@ declare const process: any;
 
 const Tolerance = 3;
 
-// All valid street and suburb names.
+// All valid street nams, street suffixes, suburb names and hundred names.
 
 let SuburbNames = null;
 let StreetSuffixes = null;
 let StreetNames = null;
+let HundredNames = null;
 
 // Sets up an sqlite database.
 
@@ -223,29 +224,30 @@ function getRightRowText(elements: Element[], startElement: Element, middleEleme
 // Reads all the address information into global objects.
 
 function readAddressInformation() {
-    StreetNames = {}
+
+    StreetNames = {};
     for (let line of fs.readFileSync("streetnames.txt").toString().replace(/\r/g, "").trim().split("\n")) {
-        let streetNameTokens = line.split(",");
+        let streetNameTokens = line.toUpperCase().split(",");
         let streetName = streetNameTokens[0].trim();
         let suburbName = streetNameTokens[1].trim();
-        if (StreetNames[streetName] === undefined)
-            StreetNames[streetName] = [];
-        StreetNames[streetName].push(suburbName);  // several suburbs may exist for the same street name
+        (StreetNames[streetName] || (StreetNames[streetName] = [])).push(suburbName);  // several suburbs may exist for the same street name
     }
 
     StreetSuffixes = {};
     for (let line of fs.readFileSync("streetsuffixes.txt").toString().replace(/\r/g, "").trim().split("\n")) {
-        let streetSuffixTokens = line.split(",");
-        StreetSuffixes[streetSuffixTokens[0].trim().toLowerCase()] = streetSuffixTokens[1].trim();
+        let streetSuffixTokens = line.toUpperCase().split(",");
+        StreetSuffixes[streetSuffixTokens[0].trim()] = streetSuffixTokens[1].trim();
     }
 
     SuburbNames = {};
     for (let line of fs.readFileSync("suburbnames.txt").toString().replace(/\r/g, "").trim().split("\n")) {
-        let suburbTokens = line.split(",");
-        let suburbName = suburbTokens[0].trim().toLowerCase();
-        let suburbStateAndPostCode = suburbTokens[1].trim();
-        SuburbNames[suburbName] = suburbStateAndPostCode;
+        let suburbTokens = line.toUpperCase().split(",");
+        SuburbNames[suburbTokens[0].trim()] = suburbTokens[1].trim();
     }
+
+    HundredNames = [];
+    for (let line of fs.readFileSync("hundrednames.txt").toString().replace(/\r/g, "").trim().split("\n"))
+        HundredNames.push(line.trim().toUpperCase());
 }
 
 // Gets the elements on the line above (typically an address line).  Note that the left hand side
@@ -392,81 +394,6 @@ function getDescription(elements: Element[], startElement: Element, middleElemen
     return descriptionElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ").replace(/ﬁ/g, "fi").replace(/ﬂ/g, "fl");
 }
 
-// Formats (and corrects) an address.
-
-function formatAddress(address: string) {
-    address = address.trim();
-    if (address === "")
-        return { text: "", hasSuburb: false, hasStreet: false };
-
-    // Correct one case where "T CE" was parsed instead of "TCE" (in the May 2016 PDF).  And
-    // also correct several other special cases.  Only the first instance of the match is
-    // replaced in each case (ie. the regular expressions do not have "g" suffixes).
-
-    address = address
-        .replace(/ T CE /, " TCE ")
-        .replace(/ TC E /, " TCE ")
-        .replace(/ RD BU /, " RD ")
-        .replace(/ RD HD /, " RD ")
-        .replace(/ RD MU /, " RD ")
-        .replace(/ RD JAENSCH BEACH via /, " RD ")
-        .replace(/ RD JAENSCH BEACH Via /, " RD ")
-        .replace(/ RDJAENSCH BEACH via /, " RD ")
-        .replace(/ HVW /, " HWY ")
-        .replace(/^CedarAV /, "Cedar AV ")
-        .replace(/^MyallAV /, "Myall AV ")
-        .replace(/^RuraIAV /, "Rural AV ")
-        .replace(/^RuralAV /, "Rural AV ")
-        .replace(/^VWlowbark /, "Willowbark ")
-        .replace(/ CRESMURRAY /, " CRES MURRAY ");
-
-    let tokens = address.split(" ");
-
-    // It is common for an invalid postcode of "0" to appear at the end of an address.  Remove
-    // this if it is present.  For example, "Bremer Range RD CALLINGTON 0".  The post code can
-    // safely be remove because it will be derived later based on the suburb name.
-
-    let postCode = tokens[tokens.length - 1];
-    if (/^[0-9]{4}$/.test(postCode) || postCode === "O" || postCode === "0" || postCode === "D" || postCode === "[]" || postCode === "[J")
-        tokens.pop();
-
-    // Remove the state abbreviation (this will be determined from the suburb; it is always "SA").
-
-    let state = tokens[tokens.length - 1];
-    if (didYouMean(state, [ "SA" ], { caseSensitive: true, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 1, trimSpaces: true }) !== null)
-        tokens.pop();
-    
-    // Pop tokens from the end of the array until a valid suburb name is encountered (allowing
-    // for a few spelling errors).
-
-    let suburbName = null;
-    for (let index = 1; index <= 4; index++) {
-        let suburbNameMatch = <string>didYouMean(tokens.slice(-index).join(" "), Object.keys(SuburbNames), { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 2, trimSpaces: true });
-        if (suburbNameMatch !== null) {
-            suburbName = SuburbNames[suburbNameMatch];
-            tokens.splice(-index, index);  // remove elements from the end of the array           
-            break;
-        }
-    }
-
-    if (suburbName === null)  // suburb name not found (or not recognised)
-        return { text: address, hasSuburb: false, hasStreet: false };
-
-    // Expand an abbreviated street suffix.  For example, expand "RD" to "Road".
-
-    let streetSuffixAbbreviation = tokens.pop() || "";
-    let streetSuffix = StreetSuffixes[streetSuffixAbbreviation.toLowerCase()] || streetSuffixAbbreviation;
-
-    // Allow minor spelling corrections in the remaining tokens to construct a street name.
-
-    let streetName = (tokens.join(" ") + " " + streetSuffix).trim();
-    let streetNameMatch = <string>didYouMean(streetName, Object.keys(StreetNames), { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 2, trimSpaces: true });
-    if (streetNameMatch !== null)
-        streetName = streetNameMatch;
-
-    return { text: (streetName + ((streetName === "") ? "" : ", ") + suburbName).trim(), hasSuburb: true, hasStreet: (streetName.length > 0) };
-}
-
 // Gets and formats the address.
 
 function joinAddressElements(elements: Element[]) {
@@ -481,41 +408,265 @@ function isLegalDescription(address: string) {
     return address !== "" && (address.startsWith("HD") || address.startsWith("LOT") || address.startsWith("PCE") || address.startsWith("PLT")  || address.startsWith("SIT"));
 }
 
-function getAddress(elements: Element[], assessmentNumberElement: Element, middleElement: Element) {
-    // Allow for up to three lines in the address.
+// Constructs the full address string based on the specified address components.
 
-    let addressLine3Elements = getAboveElements(elements, assessmentNumberElement, assessmentNumberElement, middleElement);
-    let addressLine3 = joinAddressElements(addressLine3Elements)
-    if (!isAddress(addressLine3))
-        return { address: undefined, legalDescription: undefined };
+function formatAddress(houseNumber: string, streetName: string, suburbName: string) {
+    suburbName = suburbName.replace(/^HD WARD\//, "").replace(/^HD /, "").replace(/ HD$/, "").replace(/ \(RPA\)$/, "").replace(/ SA$/, "").trim();
+    suburbName = SuburbNames[suburbName.toUpperCase()] || suburbName;
+    let separator = ((houseNumber !== "" || streetName !== "") && suburbName !== "") ? ", " : "";
+    return `${houseNumber} ${streetName}${separator}${suburbName}`.trim().replace(/\s\s+/g, " ").toUpperCase().replace(/\*/g, "");
+}
 
-    let addressLine2Elements = getAboveElements(elements, assessmentNumberElement, addressLine3Elements[0], middleElement);
-    let addressLine2 = joinAddressElements(addressLine2Elements)
-    addressLine2 = isAddress(addressLine2) ? addressLine2 : "";
+// Parses the address from the house number, street name and suburb name.  Note that these
+// address components may actually contain multiple addresses (delimited by "ü" characters).
 
-    let addressLine1Elements = isAddress(addressLine2) ? getAboveElements(elements, assessmentNumberElement, addressLine2Elements[0], middleElement) : [];
-    let addressLine1 = joinAddressElements(addressLine1Elements)
-    addressLine1 = isAddress(addressLine1) ? addressLine1 : "";
-    
-    // Construct the address from the discovered address elements (and attempt to correct some
-    // spelling errors).  Note that if the address starts with a suburb then there may be a
-    // street name on the line above.
+function parseAddress(houseNumber: string, streetName: string, suburbName: string) {
+    // Two or more addresses are sometimes recorded in the same field.  This is done in a way
+    // which is ambiguous (ie. it is not possible to reconstruct the original addresses perfectly).
+    //
+    // For example, the following address:
+    //
+    //     House Number: ü35
+    //           Street: RAILWAYüSCHOOL TCE SOUTHüTERRA
+    //           Suburb: PASKEVILLEüPASKEVILLE
+    //
+    // should be interpreted as the following two addresses:
+    //
+    //     RAILWAY TCE SOUTH, PASKEVILLE
+    //     35 SCHOOL TERRA(CE), PASKEVILLE
+    //
+    // whereas the following address:
+    //
+    //     House Number: 79ü4
+    //           Street: ROSSLYNüSWIFT WINGS ROADüROAD
+    //           Suburb: WALLAROOüWALLAROO
+    //
+    // should be interpreted as the following two addresses:
+    //
+    //     79 ROSSLYN ROAD, WALLAROO
+    //     4 SWIFT WINGS ROAD, WALLAROO
+    //
+    // And so notice that in the first case above the "TCE" text of the Street belonged to the
+    // first address.  Whereas in the second case above the "WINGS" text of the Street belonged
+    // to the second address (this was deduced by examining actual existing street names).
 
-    let formattedAddress = formatAddress(addressLine3);
-    if (!formattedAddress.hasStreet && isAddress(addressLine2) && !isLegalDescription(addressLine2))
-        formattedAddress = formatAddress(addressLine2 + " " + formattedAddress.text);
+    houseNumber = houseNumber.replace(/Ü/g, "ü");
+    streetName = streetName.replace(/Ü/g, "ü");
+    suburbName = suburbName.replace(/Ü/g, "ü");
 
-    // Attempt to extract any legal description (eg. a hundred name and lot number).
+    if (!houseNumber.includes("ü"))
+        return formatAddress(houseNumber, streetName, suburbName);
 
-    let legalDescription = "";
-    if (isLegalDescription(addressLine1))
-        legalDescription += ((legalDescription === "") ? "" : " ") + addressLine1;
-    if (isLegalDescription(addressLine2))
-        legalDescription += ((legalDescription === "") ? "" : " ") + addressLine2;
-    if (isLegalDescription(addressLine3))
-        legalDescription += ((legalDescription === "") ? "" : " ") + addressLine3;
+    // Split the house number on the "ü" character.
 
-    return { address: formattedAddress.text, legalDescription: legalDescription };
+    let houseNumberTokens = houseNumber.split("ü");
+
+    // Split the suburb name on the "ü" character.
+
+    let suburbNameTokens = suburbName.split("ü");
+
+    // The street name will have twice as many "ü" characters as the house number.  Each street
+    // name is broken in two and the resulting strings are joined into two groups (delimited
+    // by "ü" within the groups).  A single space is used to join the two groups together.
+    //
+    // For example, the street names "WALLACE STREET" and "MAY TERRACE" are broken in two as
+    // "WALLACE" and "STREET"; and "MAY" and "TERRACE".  And then joined back together into
+    // two groups, "WALLACEüMAY" and "STREETüTERRACE".  Those two groups are then concatenated
+    // together using a single intervening space to form "WALLACEüMAY STREETüTERRACE".
+    //
+    // Unfortunately, the street name is truncated at 30 characters so some of the "ü" characters
+    // may be missing.  Also note that there is an ambiguity in some cases as to whether a space
+    // is a delimiter or is just a space that happens to occur within a street name or suffix 
+    // (such as "Kybunga Top" in "Kybunga Top Road" or "TERRACE SOUTH" in "RAILWAY TERRACE SOUTH").
+    //
+    // For example,
+    //
+    //     PHILLIPSüHARBISON ROADüROAD     <-- street names broken in two and joined into groups
+    //     BarrüFrances StreetüTerrace     <-- street names broken in two and joined into groups
+    //     GOYDERüGOYDERüMail HDüHDüRoad   <-- street names broken in two and joined into groups
+    //     ORIENTALüWINDJAMMER COURTüCOUR  <-- truncated street suffix
+    //     TAYLORüTAYLORüTAYLOR STREETüST  <-- missing "ü" character due to truncation
+    //     EDGARüEASTüEAST STREETüTERRACE  <-- missing "ü" character due to truncation
+    //     SOUTH WESTüSOUTH WEST TERRACEü  <-- missing "ü" character due to truncation
+    //     ChristopherüChristopher Street  <-- missing "ü" character due to truncation
+    //     PORT WAKEFIELDüPORT WAKEFIELD   <-- missing "ü" character due to truncation
+    //     KENNETT STREETüKENNETT STREET   <-- missing "ü" character due to truncation (the missing text is probably " SOUTHüSOUTH")
+    //     NORTH WESTüNORTH WESTüNORTH WE  <-- missing "ü" characters due to truncation
+    //     RAILWAYüSCHOOL TCE SOUTHüTERRA  <-- ambiguous space delimiter
+    //     BLYTHüWHITE WELL HDüROAD        <-- ambiguous space delimiter
+    //     Kybunga TopüKybunga Top RoadüR  <-- ambiguous space delimiter
+    //     SOUTHüSOUTH TERRACE EASTüTERRA  <-- ambiguous space delimiter
+
+    // Artificially increase the street name tokens to twice the length (minus one) of the house
+    // number tokens (this then simplifies the following processing).  The "minus one" is because
+    // the middle token will be split in two later.
+
+    let streetNameTokens = streetName.split("ü");
+    while (streetNameTokens.length < 2 * houseNumberTokens.length - 1)
+        streetNameTokens.push("");
+
+    // Consider the following street name (however, realistically this would be truncated at
+    // 30 characters; this is ignored for the sake of explaining the parsing),
+    //
+    //     Kybunga TopüSmithüRailway South RoadüTerrace EastüTerrace
+    //
+    // This street name would be split into the following tokens,
+    //
+    //     Token 0: Kybunga Top
+    //     Token 1: Smith
+    //     Token 2: Railway South Road  <-- the middle token contains a delimiting space (it is ambiguous as to which space is the correct delimiter)
+    //     Token 3: Terrace East
+    //     Token 4: Terrace
+    //
+    // And from these tokens, the following candidate sets of tokens would be constructed (each
+    // broken into two groups).  Note that the middle token [Railway South Road] is broken into
+    // two tokens in different ways depending on which space is chosen as the delimiter for the
+    // groups: [Railway] and [South Road] or [Railway South] and [Road].
+    //
+    //     Candidate 1: [Kybunga Top] [Smith] [Railway]   [South Road] [Terrace East] [Terrace]
+    //                 └───────────╴Group 1╶───────────┘ └──────────────╴Group 2╶──────────────┘
+    //
+    //     Candidate 2: [Kybunga Top] [Smith] [Railway South]   [Road] [Terrace East] [Terrace]
+    //                 └──────────────╴Group 1╶──────────────┘ └───────────╴Group 2╶───────────┘
+
+    let candidates = [];
+
+    let middleTokenIndex = houseNumberTokens.length - 1;
+    if (!streetNameTokens[middleTokenIndex].includes(" "))  // the space may be missing if the street name is truncated at 30 characters
+        streetNameTokens[middleTokenIndex] += " ";  // artificially add a space to simplify the processing
+
+    let ambiguousTokens = streetNameTokens[middleTokenIndex].split(" ");
+    for (let index = 1; index < ambiguousTokens.length; index++) {
+        let group1 = [ ...streetNameTokens.slice(0, middleTokenIndex), ambiguousTokens.slice(0, index).join(" ")];
+        let group2 = [ ambiguousTokens.slice(index).join(" "), ...streetNameTokens.slice(middleTokenIndex + 1)];
+        candidates.push({ group1: group1, group2: group2, hasInvalidHundredName: false });
+    }
+
+    // Full street names (with suffixes) can now be constructed for each candidate (by joining
+    // together corresponding tokens from each group of tokens).
+
+    let addresses = [];
+    for (let candidate of candidates) {
+        for (let index = 0; index < houseNumberTokens.length; index++) {
+            // Expand street suffixes such as "Tce" to "TERRACE".
+
+            let streetSuffix = candidate.group2[index].split(" ")
+                .map(token => (StreetSuffixes[token.toUpperCase()] === undefined) ? token : StreetSuffixes[token.toUpperCase()])
+                .join(" ");
+
+            // Construct the full street name (including the street suffix).
+
+            let houseNumber = houseNumberTokens[index];
+            let streetName = (candidate.group1[index] + " " + streetSuffix).trim().replace(/\s\s+/g, " ");
+            if (streetName === "")
+                continue;  // ignore blank street names
+
+            // Check whether the street name is actually a hundred name such as "BARUNGA HD".
+
+            if (streetName.startsWith("HD ") || streetName.endsWith(" HD") || streetName.toUpperCase().endsWith(" HUNDRED")) {  // very likely a hundred name
+                let hundredNameMatch = didYouMean(streetName.slice(0, -3), HundredNames, { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 0, trimSpaces: true });
+                if (hundredNameMatch === null)
+                    candidate.hasInvalidHundredName = true;  // remember that there is an invalid hundred name (for example, "BARUNGA View HD")
+                continue;  // ignore all hundred names names
+            }
+
+            // Determine the associated suburb name.
+
+            let associatedSuburbName = suburbNameTokens[index];
+            if (associatedSuburbName === undefined || associatedSuburbName.trim() === "")
+                continue;  // ignore blank suburb names
+
+            // Choose the best matching street name (from the known street names).
+
+            let streetNameMatch = didYouMean(streetName, Object.keys(StreetNames), { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 0, trimSpaces: true });
+            if (streetNameMatch !== null)
+                addresses.push({ houseNumber: houseNumber, streetName: streetName, suburbName: associatedSuburbName, threshold: 0, candidate: candidate });
+            else {
+                streetNameMatch = didYouMean(streetName, Object.keys(StreetNames), { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 1, trimSpaces: true });
+                if (streetNameMatch !== null)
+                    addresses.push({ houseNumber: houseNumber, streetName: streetNameMatch, suburbName: associatedSuburbName, threshold: 1, candidate: candidate });
+                else {
+                    streetNameMatch = didYouMean(streetName, Object.keys(StreetNames), { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 2, trimSpaces: true });
+                    if (streetNameMatch !== null)
+                        addresses.push({ houseNumber: houseNumber, streetName: streetNameMatch, suburbName: associatedSuburbName, threshold: 2, candidate: candidate });
+                    else
+                        addresses.push({ houseNumber: houseNumber, streetName: streetName, suburbName: associatedSuburbName, threshold: Number.MAX_VALUE, candidate: candidate });  // unrecognised street name
+                }
+            }
+        }
+    }
+
+    if (addresses.length === 0)
+        return undefined;  // no valid addresses found
+
+    // Sort the addresses so that "better" addresses are moved to the front of the array.
+
+    addresses.sort(addressComparer);
+
+    // Format and return the "best" address.
+
+    let address = addresses[0];
+    return formatAddress(address.houseNumber, address.streetName, address.suburbName);
+}
+
+// Returns a number indicating which address is "larger" (in this case "larger" means a "worse"
+// address).  This can be used to sort addresses so that "better" addresses, ie. those with a
+// house number and fewer spelling errors appear at the start of an array.
+
+function addressComparer(a, b) {
+    // As long as there are one or two spelling errors then prefer the address with a
+    // house number (even if it has more spelling errors).
+
+    if (a.threshold <= 2 && b.threshold <= 2) {
+        if (a.houseNumber === "" && b.houseNumber !== "")
+            return 1;
+        else if (a.houseNumber !== "" && b.houseNumber === "")
+            return -1;
+    }
+
+    // For larger numbers of spelling errors prefer addresses with fewer spelling errors before
+    // considering the presence of a house number.
+
+    if (a.threshold > b.threshold)
+        return 1;
+    else if (a.threshold < b.threshold)
+        return -1;
+
+    if (a.houseNumber === "" && b.houseNumber !== "")
+        return 1;
+    else if (a.houseNumber !== "" && b.houseNumber === "")
+        return -1;
+
+    // All other things being equal (as tested above), avoid addresses belonging to a candidate
+    // that has an invalid hundred name.  This is because having an invalid hundred name often
+    // means that the wrong delimiting space has been chosen for that candidate (as below where
+    // candidate 0 contains the invalid hundred name, "BARUNGA View HD", and so likely the other
+    // address in that candidate is also wrong, namely, "Lake Road").
+    //
+    // Where there are multiple candidates mark down the candidates that contain street names
+    // ending in " HD" and so likely represent a hundred name, but do not actually contain a
+    // valid hundred name.  For example, the valid street name "Lake View Road" in candidate 1
+    // is the better choice in the following because the hundred name "BARUNGA View HD" in
+    // candidate 0 is invalid.
+    //
+    //     BARUNGAüLake View HDüRoad
+    //
+    // Candidate 0: [BARUNGA] [Lake]   [View HD] [Road]
+    //             └───╴Group 1╶────┘ └───╴Group 2╶────┘
+    //     Resulting street names:
+    //         BARUNGA View HD  <-- invalid hundred name
+    //         Lake Road        <-- valid street name
+    //
+    // Candidate 1: [BARUNGA] [Lake View]   [HD] [Road]
+    //             └──────╴Group 1╶──────┘ └─╴Group 2╶─┘
+    //     Resulting street names:
+    //         BARUNGA HD      <-- valid hundred name 
+    //         Lake View Road  <-- valid street name
+
+    if (a.candidate.hasInvalidHundredName && !b.candidate.hasInvalidHundredName)
+        return 1;
+    else if (!a.candidate.hasInvalidHundredName && b.candidate.hasInvalidHundredName)
+        return -1;
 }
 
 // Parses the details from the elements associated with a single development application.
@@ -532,8 +683,8 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
     let lotHeadingBounds = findTextBounds(elements, "Lot");
     let sectionHeadingBounds = findTextBounds(elements, "Section");
     let planHeadingBounds = findTextBounds(elements, "Plan");
-    let streetHeadingBounds = findTextBounds(elements, "Street");
-    let suburbHeadingBounds = findTextBounds(elements, "Suburb");
+    let streetNameHeadingBounds = findTextBounds(elements, "Street");
+    let suburbNameHeadingBounds = findTextBounds(elements, "Suburb");
     let titleHeadingBounds = findTextBounds(elements, "Title");
     let hundredHeadingBounds = findTextBounds(elements, "Hundred");
     
@@ -553,8 +704,6 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
         width: (applicationDateHeadingBounds === undefined) ? 2 * applicationNumberHeadingBounds.width : (applicationDateHeadingBounds.x - applicationNumberHeadingBounds.x - applicationNumberHeadingBounds.width),
         height: applicationNumberHeadingBounds.height
     };
-
-    await composeImage(imageInfos, applicationNumberBounds);
 
     let applicationNumber = elements.filter(element => getPercentageOfElementInRectangle(element, applicationNumberBounds) > 90).map(element => element.text).join("").replace(/\s/g, "");
     if (applicationNumber === undefined || applicationNumber === "") {
@@ -590,12 +739,10 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
             x: developmentDescriptionHeadingBounds.x,
             y: developmentDescriptionHeadingBounds.y + developmentDescriptionHeadingBounds.height,
             width: (rightBounds === undefined) ? 3 * developmentDescriptionHeadingBounds.width : (rightBounds.x - applicationNumberHeadingBounds.x),
-            height: (privateCertifierNameHeadingBounds == undefined) ? 2 * developmentDescriptionHeadingBounds.height : privateCertifierNameHeadingBounds.y - developmentDescriptionHeadingBounds.y - developmentDescriptionHeadingBounds.height
+            height: (privateCertifierNameHeadingBounds == undefined) ? 2 * developmentDescriptionHeadingBounds.height : (privateCertifierNameHeadingBounds.y - developmentDescriptionHeadingBounds.y - developmentDescriptionHeadingBounds.height - Tolerance)
         };
         description = elements.filter(element => getPercentageOfElementInRectangle(element, descriptionBounds) > 90).map(element => element.text).join(" ");
-        await composeImage(imageInfos, descriptionBounds);
     }
-
 
     // Get the house number.
 
@@ -608,6 +755,10 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
             height: propertyHouseNumberHeadingBounds.height
         };
         houseNumber = elements.filter(element => getPercentageOfElementInRectangle(element, houseNumberBounds) > 90).map(element => element.text).join(" ");
+        console.log(`Before: ${houseNumber}`);
+        let houseNumberElements = await parseImage(composeImage(imageInfos, houseNumberBounds), houseNumberBounds, "deu");  // use German so that "ü" characters are recognised
+        houseNumber = houseNumberElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
+        console.log(` After: ${houseNumber}`);
     }
 
     // Get the lot.
@@ -651,29 +802,36 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
 
     // Get the street.
 
-    let street = "";
-    if (streetHeadingBounds !== undefined) {
-        let streetBounds = {
-            x: streetHeadingBounds.x + streetHeadingBounds.width,
-            y: streetHeadingBounds.y - Tolerance,
-            width: (rightBounds === undefined) ? 3 * streetHeadingBounds.width : (rightBounds.x - streetHeadingBounds.x - streetHeadingBounds.width),
-            height: streetHeadingBounds.height + 2 * Tolerance
+    let streetName = "";
+    if (streetNameHeadingBounds !== undefined) {
+        let streetNameBounds = {
+            x: streetNameHeadingBounds.x + streetNameHeadingBounds.width,
+            y: streetNameHeadingBounds.y - Tolerance,
+            width: (rightBounds === undefined) ? 3 * streetNameHeadingBounds.width : (rightBounds.x - streetNameHeadingBounds.x - streetNameHeadingBounds.width),
+            height: streetNameHeadingBounds.height + 2 * Tolerance
         };
-        street = elements.filter(element => getPercentageOfElementInRectangle(element, streetBounds) > 90).map(element => element.text).join(" ");
-        await composeImage(imageInfos, streetBounds);
+        streetName = elements.filter(element => getPercentageOfElementInRectangle(element, streetNameBounds) > 90).map(element => element.text).join(" ");
+        let streetNameElements = await parseImage(composeImage(imageInfos, streetNameBounds), streetNameBounds, "deu");  // use German so that "ü" characters are recognised
+        console.log(`Before: ${streetName}`);
+        streetName = streetNameElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
+        console.log(` After: ${streetName}`);
     }
 
     // Get the suburb.
 
-    let suburb = "";
-    if (suburbHeadingBounds !== undefined) {
-        let suburbBounds = {
-            x: suburbHeadingBounds.x + suburbHeadingBounds.width,
-            y: suburbHeadingBounds.y - Tolerance,
-            width: (rightBounds === undefined) ? 3 * suburbHeadingBounds.width : (rightBounds.x - suburbHeadingBounds.x - suburbHeadingBounds.width),
-            height: suburbHeadingBounds.height + 2 * Tolerance
+    let suburbName = "";
+    if (suburbNameHeadingBounds !== undefined) {
+        let suburbNameBounds = {
+            x: suburbNameHeadingBounds.x + suburbNameHeadingBounds.width,
+            y: suburbNameHeadingBounds.y - Tolerance,
+            width: (rightBounds === undefined) ? 3 * suburbNameHeadingBounds.width : (rightBounds.x - suburbNameHeadingBounds.x - suburbNameHeadingBounds.width),
+            height: suburbNameHeadingBounds.height + 2 * Tolerance
         };
-        suburb = elements.filter(element => getPercentageOfElementInRectangle(element, suburbBounds) > 90).map(element => element.text).join(" ");
+        suburbName = elements.filter(element => getPercentageOfElementInRectangle(element, suburbNameBounds) > 90).map(element => element.text).join(" ");
+        let suburbNameElements = await parseImage(composeImage(imageInfos, suburbNameBounds), suburbNameBounds, "deu");  // use German so that "ü" characters are recognised
+        console.log(`Before: ${suburbName}`);
+        suburbName = suburbNameElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
+        console.log(`Before: ${suburbName}`);
     }
 
     // Get the title.
@@ -704,8 +862,8 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
 
     // Construct the address.
     
-    let address = `${houseNumber} ${street}, ${suburb}`;
-    if (address === undefined) {
+    let address = parseAddress(houseNumber, streetName, suburbName);
+    if (address === undefined || address === "") {
         let elementSummary = elements.map(element => `[${element.text}]`).join("");
         console.log(`Application number ${applicationNumber} will be ignored because an address was not found or parsed.  Elements: ${elementSummary}`);
         return undefined;
@@ -745,12 +903,6 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
 
 function segmentImage(jimpImage: any) {
     let bounds = { x: 0, y: 0, width: jimpImage.bitmap.width, height: jimpImage.bitmap.height };
-
-    // Only segment large images (do not waste time on small images which are already small enough
-    // that they will not cause too much memory to be used).
-
-    if (jimpImage.bitmap.width * jimpImage.bitmap.height < 400 * 400)
-        return [{ image: jimpImage, bounds: bounds }];
        
     // Segment the image based on white space.
 
@@ -877,36 +1029,6 @@ function segmentImageHorizontally(jimpImage: any, bounds: Rectangle) {
     }
 
     return rectangles;
-}
-
-// Gets the record count number from the first page.
-
-function getRecordCount(elements: Element[], startElement: Element) {
-    let topmostY = (startElement === undefined) ? Number.MAX_VALUE : startElement.y;
-    
-    // Find the "Records" text (allowing for spelling errors).
-
-    let recordsElement = elements.find(element =>
-         element.y < topmostY &&
-         didYouMean(element.text, [ "Records" ], { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 2, trimSpaces: true }) !== null
-    );
-
-    // Get the number to the right of "Records".
-
-    if (recordsElement !== undefined) {
-        let recordNumberElement = elements.find(element =>
-            element.x > recordsElement.x + recordsElement.width &&
-            getVerticalOverlapPercentage(element, recordsElement) > 50
-        );
-    
-        if (recordNumberElement !== undefined) {
-            let recordCount = Number(recordNumberElement.text);  // returns NaN if invalid
-            if (!isNaN(recordCount))
-                return recordCount;
-        }
-    }
-
-    return -1;
 }
 
 // Finds the elements that most closely match the specified text and returns a rectangle that
@@ -1076,21 +1198,18 @@ function ceiling(rectangle: Rectangle) {
     }
 }
 
-// Parses a sub-image (from a PDF document).
+// Composes all the images that overlap the specified bounds into a single image.
 
-let imageCount = 0;
-
-async function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle) {
+function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle) {
     compositeImageBounds = ceiling(compositeImageBounds);
-    let jimpCompositeImage = new (jimp as any)(compositeImageBounds.width, compositeImageBounds.height);
-
-console.log("Fill image with white.");
+    let compositeImage = new (jimp as any)(compositeImageBounds.width, compositeImageBounds.height, 0xffffffff);
 
     // Find all images that intersect the specified bounds.
 
     for (let imageInfo of imageInfos) {
         let image = imageInfo.image;
         let imageBounds = ceiling(imageInfo.bounds);
+
         let intersectingBounds = intersect(imageBounds, compositeImageBounds);
         if (getArea(intersectingBounds) <= 0)
             continue;
@@ -1098,6 +1217,7 @@ console.log("Fill image with white.");
         let pixelSize = (8 * image.data.length) / (image.width * image.height);
         if (pixelSize === 1) {
             // A monochrome image (one bit per pixel).
+
             for (let x = 0; x < intersectingBounds.width; x++) {
                 for (let y = 0; y < intersectingBounds.height; y++) {
                     let imageX = intersectingBounds.x - imageBounds.x + x;
@@ -1115,7 +1235,7 @@ console.log("Fill image with white.");
 
                     let compositeImageX = intersectingBounds.x - compositeImageBounds.x + x;
                     let compositeImageY = intersectingBounds.y - compositeImageBounds.y + y;
-                    jimpCompositeImage.setPixelColor(color, compositeImageX, compositeImageY);
+                    compositeImage.setPixelColor(color, compositeImageX, compositeImageY);
                 }
             }
         } else {
@@ -1130,93 +1250,21 @@ console.log("Fill image with white.");
                     let color = jimp.rgbaToInt(image.data[index], image.data[index + 1], image.data[index + 2], 255);
                     let compositeImageX = intersectingBounds.x - compositeImageBounds.x + x;
                     let compositeImageY = intersectingBounds.y - compositeImageBounds.y + y;
-                    jimpCompositeImage.setPixelColor(color, compositeImageX, compositeImageY);
+                    compositeImage.setPixelColor(color, compositeImageX, compositeImageY);
                 }
             }
         }
     }
 
-    let segments = segmentImage(jimpCompositeImage);
-    if (global.gc)
-        global.gc();
-
-imageCount++;
-console.log(`Writing image ${imageCount}`);
-jimpCompositeImage.write(`C:\\Temp\\Tatiara\\Image.${imageCount}.png`);
-
-    let elements: Element[] = [];
-    for (let segment of segments) {
-        // Scale up smaller images for better parsing.
-
-        let scaleFactor = 1.0;
-        if (segment.bounds.width * segment.bounds.height < 500 * 500) {
-            scaleFactor = 3.0;
-            console.log(`    Scaling a small image (${segment.bounds.width}×${segment.bounds.height}) by ${scaleFactor} to improve parsing.`);
-            segment.image = segment.image.scale(scaleFactor, jimp.RESIZE_BEZIER);
-        }
-
-        let imageBuffer = await new Promise((resolve, reject) => segment.image.getBuffer(jimp.MIME_PNG, (error, buffer) => error ? reject(error) : resolve(buffer)));
-        segment.image = undefined;  // attempt to release memory
-
-        // Report larger memory usage and larger images for troubleshooting purposes.
-
-        let memoryUsage = process.memoryUsage();
-        if (memoryUsage.rss > 200 * 1024 * 1024)  // 200 MB
-            console.log(`    Memory Usage: rss: ${Math.round(memoryUsage.rss / (1024 * 1024))} MB, heapTotal: ${Math.round(memoryUsage.heapTotal / (1024 * 1024))} MB, heapUsed: ${Math.round(memoryUsage.heapUsed / (1024 * 1024))} MB, external: ${Math.round(memoryUsage.external / (1024 * 1024))} MB`);
-        if (segment.bounds.width * segment.bounds.height > 700 * 700)
-            console.log(`    Parsing a large image with bounds { x: ${Math.round(segment.bounds.x)}, y: ${Math.round(segment.bounds.y)}, width: ${Math.round(segment.bounds.width)}, height: ${Math.round(segment.bounds.height)} }.`);
-
-        // Note that textord_old_baselines is set to 0 so that text that is offset by half the
-        // height of the the font is correctly recognised.
-
-        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { textord_old_baselines: "0" }).then(function(result) { resolve(result); }) });
-
-// console.log("Trying without textord_old_baselines.");
-// Not too bad, got "i140 VICTORlADGREEN, BORDERTOWNuBORDERTOWN" ... maybe due to no dawg and no dict        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { textord_old_baselines: "0", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0", crunch_leave_uc_strings: "50", crunch_leave_lc_strings: "50", tessedit_char_whitelist: " \"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" }).then(function(result) { resolve(result); }) });
-// Not too bad, got "i140 VICTORIAﬂGREEN, BORDERTOWNuBORDERTOWN" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
-//        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { language_model_penalty_case: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0", segment_penalty_dict_nonword: "0", segment_penalty_garbage: "0", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0" }).then(function(result) { resolve(result); }) });
-// Fine, probably best! (without enable_new_reg ... )        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { textord_old_baselines: "0", language_model_penalty_case: "0", enable_new_segsearch: "1" }).then(function(result) { resolve(result); }) });
-// Worse: "i140 VICTORlADGREEN, BORDERTOWNuBORDERTOWN" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { enable_new_segsearch: "1", textord_old_baselines: "0", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0", crunch_leave_uc_strings: "50", crunch_leave_lc_strings: "50", tessedit_char_whitelist: " \"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" }).then(function(result) { resolve(result); }) });
-// Good: let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { language_model_penalty_case: "0" }).then(function(result) { resolve(result); }) });
-// Pretty Good, Maybe Best: "1u1 GLANVlLLEuGLANVILLE AVENUE'L‘IA, KEITHUKElTH"" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
-// This was brilliant (ie. using German): "1ü1 GLANVILLEÜGLANVILLE AVENUEÜA, KEITHÜKEITH" and "ü40 VICTORIAÜGREEN, BORDERTOWNÜBORDERTOWN" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { lang: "deu", textord_max_noise_size: "4", textord_no_rejects: "1", textord_interpolating_skew: "0", oldbl_dot_error_size: "3", segsearch_max_futile_classifications: "40", noise_maxperblob: "16", language_model_penalty_script: "0", edges_use_new_outline_complexity: "1", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "1", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
-//        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { lang: "deu", textord_max_noise_size: "4", textord_no_rejects: "1", textord_interpolating_skew: "0", oldbl_dot_error_size: "3", segsearch_max_futile_classifications: "40", noise_maxperblob: "16", language_model_penalty_script: "0", edges_use_new_outline_complexity: "1", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "1", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
-// let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { lang: "deu" }).then(function(result) { resolve(result); }) });
-
-        tesseract.terminate();
-        if (global.gc)
-            global.gc();
-
-        // Simplify the lines (remove most of the information generated by tesseract.js).
-
-        if (result && result.blocks && result.blocks.length)
-            for (let block of result.blocks)
-                for (let paragraph of block.paragraphs)
-                    for (let line of paragraph.lines)
-                        elements = elements.concat(line.words.map(word => {
-                            return {
-                                text: word.text,
-                                confidence: word.confidence,
-                                choiceCount: word.choices.length,
-                                x: compositeImageBounds.x + segment.bounds.x + word.bbox.x0 / scaleFactor,
-                                y: compositeImageBounds.y + segment.bounds.y + word.bbox.y0 / scaleFactor,
-                                width: (word.bbox.x1 - word.bbox.x0) / scaleFactor,
-                                height: (word.bbox.y1 - word.bbox.y0) / scaleFactor
-                            };
-                        }));
-    }
-
-    console.log(`Writing text for ${imageCount}`);
-    fs.writeFileSync(`C:\\Temp\\Tatiara\\Image.${imageCount}.txt`, JSON.stringify(elements));
+    return compositeImage;
 }
 
-// Parses an image (from a PDF document).
+// Parses text from an image.
 
-async function parseImage(image: any, bounds: Rectangle) {
-    // Convert the image data into a format that can be used by jimp and then segment the image
-    // based on blocks of white.
+async function parseImage(image: any, bounds: Rectangle, language: string) {
+    // Segment the image based on blocks of white.
 
-    let segments = segmentImage(convertToJimpImage(image));
+    let segments = segmentImage(image);
     if (global.gc)
         global.gc();
 
@@ -1245,19 +1293,7 @@ async function parseImage(image: any, bounds: Rectangle) {
         // Note that textord_old_baselines is set to 0 so that text that is offset by half the
         // height of the the font is correctly recognised.
 
-         let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { textord_old_baselines: "0" }).then(function(result) { resolve(result); }) });
-
-// console.log("Trying without textord_old_baselines.");
-// Not too bad, got "i140 VICTORlADGREEN, BORDERTOWNuBORDERTOWN" ... maybe due to no dawg and no dict        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { textord_old_baselines: "0", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0", crunch_leave_uc_strings: "50", crunch_leave_lc_strings: "50", tessedit_char_whitelist: " \"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" }).then(function(result) { resolve(result); }) });
-// Not too bad, got "i140 VICTORIAﬂGREEN, BORDERTOWNuBORDERTOWN" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
-//        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { language_model_penalty_case: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0", segment_penalty_dict_nonword: "0", segment_penalty_garbage: "0", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0" }).then(function(result) { resolve(result); }) });
-// Fine, probably best! (without enable_new_reg ... )        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { textord_old_baselines: "0", language_model_penalty_case: "0", enable_new_segsearch: "1" }).then(function(result) { resolve(result); }) });
-// Worse: "i140 VICTORlADGREEN, BORDERTOWNuBORDERTOWN" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { enable_new_segsearch: "1", textord_old_baselines: "0", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0", crunch_leave_uc_strings: "50", crunch_leave_lc_strings: "50", tessedit_char_whitelist: " \"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" }).then(function(result) { resolve(result); }) });
-// Good: let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { language_model_penalty_case: "0" }).then(function(result) { resolve(result); }) });
-// Pretty Good, Maybe Best: "1u1 GLANVlLLEuGLANVILLE AVENUE'L‘IA, KEITHUKElTH"" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "0", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
-// This was brilliant (ie. using German): "1ü1 GLANVILLEÜGLANVILLE AVENUEÜA, KEITHÜKEITH" and "ü40 VICTORIAÜGREEN, BORDERTOWNÜBORDERTOWN" let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { lang: "deu", textord_max_noise_size: "4", textord_no_rejects: "1", textord_interpolating_skew: "0", oldbl_dot_error_size: "3", segsearch_max_futile_classifications: "40", noise_maxperblob: "16", language_model_penalty_script: "0", edges_use_new_outline_complexity: "1", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "1", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
-//        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { lang: "deu", textord_max_noise_size: "4", textord_no_rejects: "1", textord_interpolating_skew: "0", oldbl_dot_error_size: "3", segsearch_max_futile_classifications: "40", noise_maxperblob: "16", language_model_penalty_script: "0", edges_use_new_outline_complexity: "1", load_system_dawg: "0", load_freq_dawg: "0", enable_noise_removal: "1", language_model_penalty_case: "0", segment_penalty_garbage: "0", segment_penalty_dict_nonword: "0", segment_penalty_dict_case_bad: "0", segment_penalty_dict_case_ok: "0" }).then(function(result) { resolve(result); }) });
-// let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { lang: "deu" }).then(function(result) { resolve(result); }) });
+        let result: any = await new Promise((resolve, reject) => { tesseract.recognize(imageBuffer, { lang: language, textord_old_baselines: "0" }).then(function(result) { resolve(result); }) });
 
         tesseract.terminate();
         if (global.gc)
@@ -1289,7 +1325,6 @@ async function parseImage(image: any, bounds: Rectangle) {
 
 async function parsePdf(url: string) {
     let developmentApplications = [];
-    let recordCount = -1;
 
     // Read the PDF.
 
@@ -1301,10 +1336,7 @@ async function parsePdf(url: string) {
     // memory usage by the PDF (just calling page._destroy() on each iteration of the loop appears
     // not to be enough to release all memory used by the PDF parsing).
 
-console.log("Only parsing page 1.");
-
-    // for (let pageIndex = 0; pageIndex < 500; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
-    for (let pageIndex = 0; pageIndex < 50; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
+    for (let pageIndex = 0; pageIndex < 500; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
         let pdf = await pdfjs.getDocument({ data: buffer, disableFontFace: true, ignoreErrors: true });
         if (pageIndex >= pdf.numPages)
             break;
@@ -1364,7 +1396,7 @@ console.log("Only parsing page 1.");
 
             // Parse the text from the image.
 
-            elements = elements.concat(await parseImage(image, bounds));
+            elements = elements.concat(await parseImage(convertToJimpImage(image), bounds, "eng"));
             if (global.gc)
                 global.gc();
         }
@@ -1416,13 +1448,6 @@ console.log("Only parsing page 1.");
             applicationElementGroups.push({ startElement: startElements[index], elements: elements.filter(element => element.y >= rowTop && element.y + element.height < nextRowTop) });
         }
 
-        // The first page typically has a record count which can be used to determine if all
-        // applications are successfully parsed later (although sometimes this record count
-        // itself is innaccurate).
-
-        if (pageIndex === 0 && startElements.length >= 1)  // first page
-            recordCount = getRecordCount(elements, startElements[0]);
-
         // Parse the development application from each group of elements (ie. a section of the
         // current page of the PDF document).  If the same application number is encountered a
         // second time in the same document then this likely indicates the parsing of the images
@@ -1440,20 +1465,6 @@ console.log("Only parsing page 1.");
                 developmentApplications.push(developmentApplication);
             }
         }
-    }
-
-    // Check whether the expected number of development applications have been encountered.
-
-    if (recordCount !== -1) {
-        let recordCountDiscrepancy = recordCount - developmentApplications.length;
-        if (recordCountDiscrepancy <= -2)
-            console.log(`Warning: ${-recordCountDiscrepancy} extra records were extracted from the PDF (record count at start of PDF: ${recordCount}; extracted application count: ${developmentApplications.length}).`);
-        else if (recordCountDiscrepancy == -1)
-            console.log(`Warning: 1 extra record was extracted from the PDF (record count at start of PDF: ${recordCount}; extracted application count: ${developmentApplications.length}).`);
-        else if (recordCountDiscrepancy == 1)
-            console.log(`Warning: 1 record was not extracted from the PDF (record count at start of PDF: ${recordCount}; extracted application count: ${developmentApplications.length}).`);
-        else if (recordCountDiscrepancy >= 2)
-            console.log(`Warning: ${recordCountDiscrepancy} records were not extracted from the PDF (record count at start of PDF: ${recordCount}; extracted application count: ${developmentApplications.length}).`);
     }
 
     return developmentApplications;
@@ -1478,7 +1489,7 @@ async function main() {
 
     let database = await initializeDatabase();
     
-    // Read all street, street suffix, suburb, state and post code information.
+    // Read all the street, street suffix, suburb and hundred information.
 
     readAddressInformation();
 

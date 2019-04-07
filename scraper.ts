@@ -585,20 +585,15 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
 
     // Get the description.
 
-console.log(JSON.stringify(elements));
-
     let description = "";
     if (developmentDescriptionHeadingBounds !== undefined) {
-        console.log(developmentDescriptionHeadingBounds);
         let descriptionBounds = {
-            x: developmentDescriptionHeadingBounds.x,
+            x: developmentDescriptionHeadingBounds.x - developmentDescriptionHeadingBounds.width / 2,
             y: developmentDescriptionHeadingBounds.y + developmentDescriptionHeadingBounds.height,
             width: (rightBounds === undefined) ? 3 * developmentDescriptionHeadingBounds.width : (rightBounds.x - developmentDescriptionHeadingBounds.x),
             height: (privateCertifierNameHeadingBounds == undefined) ? 2 * developmentDescriptionHeadingBounds.height : (privateCertifierNameHeadingBounds.y - developmentDescriptionHeadingBounds.y - developmentDescriptionHeadingBounds.height - Tolerance)
         };
-        console.log(descriptionBounds);
         description = elements.filter(element => getPercentageOfElementInRectangle(element, descriptionBounds) > 90).map(element => element.text).join(" ");
-        console.log(`Description: ${description}`);
     }
 
     // Get the house number.
@@ -611,11 +606,8 @@ console.log(JSON.stringify(elements));
             width: (rightBounds === undefined) ? 3 * propertyHouseNumberHeadingBounds.width : (rightBounds.x - propertyHouseNumberHeadingBounds.x - propertyHouseNumberHeadingBounds.width),
             height: propertyHouseNumberHeadingBounds.height
         };
-        houseNumber = elements.filter(element => getPercentageOfElementInRectangle(element, houseNumberBounds) > 75).map(element => element.text).join(" ");
-        console.log(`Before: ${houseNumber}`);
         let houseNumberElements = await parseImage(composeImage(imageInfos, houseNumberBounds), houseNumberBounds, "deu");  // use German so that "ü" characters are recognised
         houseNumber = houseNumberElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
-        console.log(` After: ${houseNumber}`);
     }
 
     // Get the lot.
@@ -667,12 +659,8 @@ console.log(JSON.stringify(elements));
             width: (rightBounds === undefined) ? 3 * streetNameHeadingBounds.width : (rightBounds.x - streetNameHeadingBounds.x - streetNameHeadingBounds.width),
             height: streetNameHeadingBounds.height + 2 * Tolerance
         };
-
-        streetName = elements.filter(element => getPercentageOfElementInRectangle(element, streetNameBounds) > 75).map(element => element.text).join(" ");
         let streetNameElements = await parseImage(composeImage(imageInfos, streetNameBounds), streetNameBounds, "deu");  // use German so that "ü" characters are recognised
-        console.log(`Before: ${streetName}`);
         streetName = streetNameElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
-        console.log(` After: ${streetName}`);
     }
 
     // Get the suburb.
@@ -685,11 +673,8 @@ console.log(JSON.stringify(elements));
             width: (rightBounds === undefined) ? 3 * suburbNameHeadingBounds.width : (rightBounds.x - suburbNameHeadingBounds.x - suburbNameHeadingBounds.width),
             height: suburbNameHeadingBounds.height + 2 * Tolerance
         };
-        suburbName = elements.filter(element => getPercentageOfElementInRectangle(element, suburbNameBounds) > 75).map(element => element.text).join(" ");
         let suburbNameElements = await parseImage(composeImage(imageInfos, suburbNameBounds), suburbNameBounds, "deu");  // use German so that "ü" characters are recognised
-        console.log(`Before: ${suburbName}`);
         suburbName = suburbNameElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
-        console.log(` After: ${suburbName}`);
     }
 
     // Get the title.
@@ -741,11 +726,6 @@ console.log(JSON.stringify(elements));
     if (hundred !== "")
         legalDescriptionElements.push(`Hundred ${hundred}`);
     let legalDescription = legalDescriptionElements.join(", ");
-
-console.log(`Description: ${description}`);
-console.log(`      Legal: ${legalDescription}`);
-console.log(`    Address: ${address}`);
-console.log(`       Date: ${(receivedDate !== undefined && receivedDate.isValid()) ? receivedDate.format("YYYY-MM-DD") : ""}`);
 
     return {
         applicationNumber: applicationNumber,

@@ -202,29 +202,9 @@ function getRightElement(elements: Element[], element: Element) {
     return (closestElement.text === undefined) ? undefined : closestElement;
 }
 
-// Gets the text to the right of the specified startElement up to the left hand side of the
-// specified middleElement (adjusted left by 20% of the width of the middleElement as a safety
-// precaution).  Only elements that overlap 50% or more in the vertical direction with the
-// specified startElement are considered (ie. elements on the same "row" and not too tall).
-
-function getRightRowText(elements: Element[], startElement: Element, middleElement: Element) {
-    let rowElements = elements.filter(element =>
-        element.x > startElement.x + startElement.width &&
-        element.x < middleElement.x - 0.2 * middleElement.width &&
-        getVerticalOverlapPercentage(element, startElement) > 50
-    );
-
-    // Sort and then join the elements into a single string.
-
-    let xComparer = (a: Element, b: Element) => (a.x > b.x) ? 1 : ((a.x < b.x) ? -1 : 0);
-    rowElements.sort(xComparer);
-    return rowElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ");
-}
-
 // Reads all the address information into global objects.
 
 function readAddressInformation() {
-
     StreetNames = {};
     for (let line of fs.readFileSync("streetnames.txt").toString().replace(/\r/g, "").trim().split("\n")) {
         let streetNameTokens = line.toUpperCase().split(",");
@@ -248,164 +228,6 @@ function readAddressInformation() {
     HundredNames = [];
     for (let line of fs.readFileSync("hundrednames.txt").toString().replace(/\r/g, "").trim().split("\n"))
         HundredNames.push(line.trim().toUpperCase());
-}
-
-// Gets the elements on the line above (typically an address line).  Note that the left hand side
-// of the leftElement is used to limit how far left the search for elements is performed (and so
-// avoids artefacts created at the very left hand side edge of the page being included as valid
-// text, such as "|" in the November 2016 PDF on page 16).
-
-function getAboveElements(elements: Element[], leftElement: Element, belowElement: Element, middleElement: Element) {
-    // Find the elements above (at least a "line" above) the specified belowElement and to the
-    // left of the middleElement.  These elements correspond to address elements (assumed to be on
-    // one single line).
-
-    let addressElements = elements.filter(element =>
-        element.y < belowElement.y - belowElement.height &&
-        element.x < middleElement.x - 0.2 * middleElement.width &&
-        element.x > leftElement.x - leftElement.height);  // use height rather than width purposely (to avoid too much width)
-        
-    // Find the lowest address element (this is assumed to form part of the single line of the
-    // address).  Note that middleElement.x is divided by two so that elements on the very right
-    // hand side of the rectangle being searched will be ignored (these tend to be descriptions
-    // that have been moved too far to the left, overlapping the rectangle in which the address
-    // is expected to appear).
-
-    let addressBottomElement = addressElements.reduce((previous, current) => ((current.x < middleElement.x / 2) && (previous === undefined || current.y > previous.y) ? current : previous), undefined);
-    if (addressBottomElement === undefined)
-        return [];
-
-    // Obtain all elements on the same "line" as the lowest address element.
-
-    addressElements = elements.filter(element =>
-        element.y < belowElement.y - belowElement.height &&
-        element.x < middleElement.x - 0.2 * middleElement.width &&
-        element.x > leftElement.x - leftElement.height &&   // use height rather than width purposely (to avoid too much width)
-        element.y >= addressBottomElement.y - Math.max(element.height, addressBottomElement.height));
-
-    // Sort the address elements by Y co-ordinate and then by X co-ordinate (the Math.max
-    // expressions exist to allow for the Y co-ordinates of elements to be not exactly aligned).
-
-    let elementComparer = (a, b) => (a.y > b.y + Math.max(a.height, b.height)) ? 1 : ((a.y < b.y - Math.max(a.height, b.height)) ? -1 : ((a.x > b.x) ? 1 : ((a.x < b.x) ? -1 : 0)));
-    addressElements.sort(elementComparer);
-
-    // Remove any smaller elements (say less than half the area) that are 90% or more encompassed
-    // by another element (this then avoids some artefacts of the text recognition, ie. elements
-    // such as "r~" and "-" that can otherwise overlap the main text).
-
-    addressElements = addressElements.filter(element =>
-        !addressElements.some(otherElement =>
-            getArea(otherElement) > 2 * getArea(element) &&  // smaller element (ie. the other element is at least double the area)
-            getArea(element) > 0 &&
-            getArea(intersect(element, otherElement)) / getArea(element) > 0.9
-        )
-    );
-
-    // Remove any address elements that occur after a sizeable gap.  Any such elements are very
-    // likely part of the description (not the address) because sometimes the description is
-    // moved to the left, closer to the address (see "Crystal Report - DevAppSeptember 2015.pdf").
-
-    for (let index = 1; index < addressElements.length; index++) {
-        if (addressElements[index].x - (addressElements[index - 1].x + addressElements[index - 1].width) > 50) {  // gap greater than 50 pixels
-            if (addressElements[index - 1].confidence >= 60 && addressElements[index].confidence >= 60) {  // avoid random marks and the edge of the paper being recognised as text
-                addressElements.length = index;  // remove the element and all following elements that appear after a large gap
-                break;
-            }
-        }
-    }
-
-    return addressElements;
-}
-
-// Finds the element containing the "Assessment Number" text.  This is a good starting point from
-// which to find other elements for the application (such as the address elements).
-
-function getAssessmentNumberElement(elements: Element[], startElement: Element) {
-    // Find the "Assessment No" text (allowing for spelling errors).
-
-    let assessmentNumberElement = elements.find(element =>
-        element.y > startElement.y &&
-        didYouMean(element.text, [ "Assessment No" ], { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 3, trimSpaces: true }) !== null);
-
-    if (assessmentNumberElement !== undefined)
-        return assessmentNumberElement;
-
-    // Find any occurrences of the text "Assessment".
-
-    let assessmentElements = elements.filter(
-        element => element.y > startElement.y &&
-        didYouMean(element.text, [ "Assessment" ], { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 2, trimSpaces: true }) !== null);
-
-    // Check if any of the occurrences of "Assessment" are followed by "No".
-
-    for (let assessmentElement of assessmentElements) {
-        let assessmentRightElement = getRightElement(elements, assessmentElement);
-        if (assessmentRightElement !== undefined && didYouMean(assessmentRightElement.text, [ "No" ], { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 1, trimSpaces: true }) !== null)
-            return assessmentElement;
-    }
-
-    return undefined;
-}
-
-// Gets the element containining the received date.
-
-function getReceivedDateElement(elements: Element[], startElement: Element, middleElement: Element) {
-    // Search to the right of "Dev App No." for the lodged date (including some leeway up and
-    // down a few "lines" from the "Dev App No." text because sometimes the lodged date is offset
-    // vertically by a fair amount; in some cases offset up and in other cases offset down).
-
-    let dateElements = elements.filter(element => element.x >= middleElement.x &&
-        element.y + element.height > startElement.y - 4 * startElement.height &&
-        element.y < startElement.y + 4 * startElement.height &&
-        moment(element.text.trim(), "D/MM/YYYY", true).isValid());
-
-    // Select the left most date (ie. favour the "lodged" date over the "final descision" date).
-
-    let receivedDateElement = dateElements.reduce((previous, current) => ((previous === undefined || previous.x > current.x) ? current : previous), undefined);
-    return receivedDateElement;
-}
-
-// Gets the description.
-
-function getDescription(elements: Element[], startElement: Element, middleElement: Element, receivedDateElement: Element) {
-    // Set the element which delineates the top of the description text.
-
-    let descriptionTopElementY = (receivedDateElement === undefined) ? startElement.y : (receivedDateElement.y + receivedDateElement.height);
-
-    // Set the element which delineates the bottom left of the description text.
-    
-    let descriptionBottomLeftElement = middleElement;
-    
-    // Extract the description text.
-    
-    let descriptionElements = elements.filter(element => element.y > descriptionTopElementY &&
-        element.y < descriptionBottomLeftElement.y &&
-        element.x > descriptionBottomLeftElement.x - 0.2 * descriptionBottomLeftElement.width);
-    
-    // Sort the description elements by Y co-ordinate and then by X co-ordinate (the Math.max
-    // expressions exist to allow for the Y co-ordinates of elements to be not exactly aligned;
-    // for example, hyphens in text such as "Retail Fitout - Shop 7").
-    
-    let elementComparer = (a, b) => (a.y > b.y + (Math.max(a.height, b.height) * 2) / 3) ? 1 : ((a.y < b.y - (Math.max(a.height, b.height) * 2) / 3) ? -1 : ((a.x > b.x) ? 1 : ((a.x < b.x) ? -1 : 0)));
-    descriptionElements.sort(elementComparer);
-
-    // Construct the description from the description elements.
-
-    return descriptionElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ").replace(/ﬁ/g, "fi").replace(/ﬂ/g, "fl");
-}
-
-// Gets and formats the address.
-
-function joinAddressElements(elements: Element[]) {
-    return elements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ").replace(/ﬁ/g, "fi").replace(/ﬂ/g, "fl").replace(/\\\//g, "V").replace(/‘/g, "").replace(/’/g, "").replace(/“/g, "").replace(/”/g, "").replace(/—/g, "").replace(/_/g, "").replace(/\./g, "").replace(/\-/g, "").replace(/\//g, "").replace(/!/g, "");
-}
-
-function isAddress(address: string) {
-    return address !== "" && !address.startsWith("Dev Cost") && !address.startsWith("Total Area") && !(address.includes(" Cost") && address.includes("$") && address.includes(","));  // ignores text such as "my Cost: $150,000" (really: "Dev Cost: $160,000") found in "Crystal Report - DevApp November 2015.pdf"
-}
-
-function isLegalDescription(address: string) {
-    return address !== "" && (address.startsWith("HD") || address.startsWith("LOT") || address.startsWith("PCE") || address.startsWith("PLT")  || address.startsWith("SIT"));
 }
 
 // Constructs the full address string based on the specified address components.
@@ -454,8 +276,29 @@ function parseAddress(houseNumber: string, streetName: string, suburbName: strin
     streetName = streetName.replace(/Ü/g, "ü");
     suburbName = suburbName.replace(/Ü/g, "ü");
 
-    if (!houseNumber.includes("ü"))
+    if (!houseNumber.includes("ü")) {
+        // Expand the street suffix.  For example, expand "TCE" to "TERRACE".
+
+        let streetNameTokens = streetName.split(" ");
+        let suffix = streetNameTokens.pop();
+        suffix = (StreetSuffixes[suffix.toUpperCase()] === undefined) ? suffix : StreetSuffixes[suffix.toUpperCase()];
+        streetNameTokens.push(suffix);
+        streetName = streetNameTokens.join(" ");
+
+        // Attempt to make minor spelling and spacing corrections to the street name.  For example,
+        // correct "CAN NAWIGARA ROAD" to "CANNAWIGARA ROAD".
+
+        let streetNameMatch = <string>didYouMean(streetName, Object.keys(StreetNames), { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 2, trimSpaces: true });
+        streetName = (streetNameMatch === null) ? streetName : streetNameMatch;
+
+        // Attempt to make minor spelling corrections to the suburb name.  For example, correct
+        // "BORDEJRTOWN" to "BORDERTOWN".
+
+        let suburbNameMatch = <string>didYouMean(suburbName, Object.keys(SuburbNames), { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 2, trimSpaces: true });
+        suburbName = (suburbNameMatch === null) ? suburbName : suburbNameMatch;
+
         return formatAddress(houseNumber, streetName, suburbName);
+    }
 
     // Split the house number on the "ü" character.
 
@@ -576,6 +419,11 @@ function parseAddress(houseNumber: string, streetName: string, suburbName: strin
             if (associatedSuburbName === undefined || associatedSuburbName.trim() === "")
                 continue;  // ignore blank suburb names
 
+            // Attempt to make minor spelling corrections to the suburb name.
+
+            let associatedSuburbNameMatch = <string>didYouMean(associatedSuburbName, Object.keys(SuburbNames), { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 2, trimSpaces: true });
+            associatedSuburbName = (associatedSuburbNameMatch === null) ? associatedSuburbName : associatedSuburbNameMatch;
+        
             // Choose the best matching street name (from the known street names).
 
             let streetNameMatch = didYouMean(streetName, Object.keys(StreetNames), { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 0, trimSpaces: true });
@@ -677,14 +525,18 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
     let applicationReceivedHeadingBounds = findTextBounds(elements, "Application received");
     let planningApprovalHeadingBounds = findTextBounds(elements, "Planning Approval");
     let developmentDescriptionHeadingBounds = findTextBounds(elements, "Development Description");
+    if (developmentDescriptionHeadingBounds === undefined)
+        developmentDescriptionHeadingBounds = findTextBounds(elements, "evelopment Description");  // allow for truncated images
+    if (developmentDescriptionHeadingBounds === undefined)
+        developmentDescriptionHeadingBounds = findTextBounds(elements, "velopment Description");  // allow for truncated images
     let privateCertifierNameHeadingBounds = findTextBounds(elements, "Private Certifier Name");
     let relevantAuthorityHeadingBounds = findTextBounds(elements, "Relevant Authority");
     let propertyHouseNumberHeadingBounds = findTextBounds(elements, "Property House No");
     let lotHeadingBounds = findTextBounds(elements, "Lot");
     let sectionHeadingBounds = findTextBounds(elements, "Section");
     let planHeadingBounds = findTextBounds(elements, "Plan");
-    let streetNameHeadingBounds = findTextBounds(elements, "Street");
-    let suburbNameHeadingBounds = findTextBounds(elements, "Suburb");
+    let streetNameHeadingBounds = findTextBounds(elements, "Property Street");
+    let suburbNameHeadingBounds = findTextBounds(elements, "Property Suburb");
     let titleHeadingBounds = findTextBounds(elements, "Title");
     let hundredHeadingBounds = findTextBounds(elements, "Hundred");
     
@@ -705,7 +557,7 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
         height: applicationNumberHeadingBounds.height
     };
 
-    let applicationNumber = elements.filter(element => getPercentageOfElementInRectangle(element, applicationNumberBounds) > 90).map(element => element.text).join("").replace(/\s/g, "");
+    let applicationNumber = elements.filter(element => getPercentageOfElementInRectangle(element, applicationNumberBounds) > 75).map(element => element.text).join("").replace(/\s/g, "");
     if (applicationNumber === undefined || applicationNumber === "") {
         let elementSummary = elements.map(element => `[${element.text}]`).join("");
         console.log(`Could not find the application number on the PDF page for the current development application.  The development application will be ignored.  Elements: ${elementSummary}`);
@@ -726,22 +578,27 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
             height: (applicationReceivedHeadingBounds === undefined) ? applicationDateHeadingBounds.height : (applicationReceivedHeadingBounds.y - applicationDateHeadingBounds.y)
         };
 
-        let receivedDateText = elements.filter(element => getPercentageOfElementInRectangle(element, receivedDateBounds) > 90).map(element => element.text).join("").replace(/\s/g, "");
+        let receivedDateText = elements.filter(element => getPercentageOfElementInRectangle(element, receivedDateBounds) > 75).map(element => element.text).join("").replace(/\s/g, "");
         if (receivedDateText !== undefined)
             receivedDate = moment(receivedDateText.trim(), "D/MM/YYYY", true);
     }
 
     // Get the description.
 
+console.log(JSON.stringify(elements));
+
     let description = "";
     if (developmentDescriptionHeadingBounds !== undefined) {
+        console.log(developmentDescriptionHeadingBounds);
         let descriptionBounds = {
             x: developmentDescriptionHeadingBounds.x,
             y: developmentDescriptionHeadingBounds.y + developmentDescriptionHeadingBounds.height,
-            width: (rightBounds === undefined) ? 3 * developmentDescriptionHeadingBounds.width : (rightBounds.x - applicationNumberHeadingBounds.x),
+            width: (rightBounds === undefined) ? 3 * developmentDescriptionHeadingBounds.width : (rightBounds.x - developmentDescriptionHeadingBounds.x),
             height: (privateCertifierNameHeadingBounds == undefined) ? 2 * developmentDescriptionHeadingBounds.height : (privateCertifierNameHeadingBounds.y - developmentDescriptionHeadingBounds.y - developmentDescriptionHeadingBounds.height - Tolerance)
         };
+        console.log(descriptionBounds);
         description = elements.filter(element => getPercentageOfElementInRectangle(element, descriptionBounds) > 90).map(element => element.text).join(" ");
+        console.log(`Description: ${description}`);
     }
 
     // Get the house number.
@@ -754,7 +611,7 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
             width: (rightBounds === undefined) ? 3 * propertyHouseNumberHeadingBounds.width : (rightBounds.x - propertyHouseNumberHeadingBounds.x - propertyHouseNumberHeadingBounds.width),
             height: propertyHouseNumberHeadingBounds.height
         };
-        houseNumber = elements.filter(element => getPercentageOfElementInRectangle(element, houseNumberBounds) > 90).map(element => element.text).join(" ");
+        houseNumber = elements.filter(element => getPercentageOfElementInRectangle(element, houseNumberBounds) > 75).map(element => element.text).join(" ");
         console.log(`Before: ${houseNumber}`);
         let houseNumberElements = await parseImage(composeImage(imageInfos, houseNumberBounds), houseNumberBounds, "deu");  // use German so that "ü" characters are recognised
         houseNumber = houseNumberElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
@@ -771,7 +628,7 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
             width: (rightBounds === undefined) ? 10 * lotHeadingBounds.width : (rightBounds.x - lotHeadingBounds.x - lotHeadingBounds.width),
             height: lotHeadingBounds.height + 2 * Tolerance
         };
-        lot = elements.filter(element => getPercentageOfElementInRectangle(element, lotBounds) > 90).map(element => element.text).join(" ");
+        lot = elements.filter(element => getPercentageOfElementInRectangle(element, lotBounds) > 75).map(element => element.text).join(" ");
     }
 
     // Get the section.
@@ -784,7 +641,7 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
             width: (rightBounds === undefined) ? 10 * sectionHeadingBounds.width : (rightBounds.x - sectionHeadingBounds.x - sectionHeadingBounds.width),
             height: sectionHeadingBounds.height + 2 * Tolerance
         };
-        section = elements.filter(element => getPercentageOfElementInRectangle(element, sectionBounds) > 90).map(element => element.text).join(" ");
+        section = elements.filter(element => getPercentageOfElementInRectangle(element, sectionBounds) > 75).map(element => element.text).join(" ");
     }
 
     // Get the plan.
@@ -797,7 +654,7 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
             width: (rightBounds === undefined) ? 10 * planHeadingBounds.width : (rightBounds.x - planHeadingBounds.x - planHeadingBounds.width),
             height: planHeadingBounds.height + 2 * Tolerance
         };
-        plan = elements.filter(element => getPercentageOfElementInRectangle(element, planBounds) > 90).map(element => element.text).join(" ");
+        plan = elements.filter(element => getPercentageOfElementInRectangle(element, planBounds) > 75).map(element => element.text).join(" ");
     }
 
     // Get the street.
@@ -810,7 +667,8 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
             width: (rightBounds === undefined) ? 3 * streetNameHeadingBounds.width : (rightBounds.x - streetNameHeadingBounds.x - streetNameHeadingBounds.width),
             height: streetNameHeadingBounds.height + 2 * Tolerance
         };
-        streetName = elements.filter(element => getPercentageOfElementInRectangle(element, streetNameBounds) > 90).map(element => element.text).join(" ");
+
+        streetName = elements.filter(element => getPercentageOfElementInRectangle(element, streetNameBounds) > 75).map(element => element.text).join(" ");
         let streetNameElements = await parseImage(composeImage(imageInfos, streetNameBounds), streetNameBounds, "deu");  // use German so that "ü" characters are recognised
         console.log(`Before: ${streetName}`);
         streetName = streetNameElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
@@ -827,11 +685,11 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
             width: (rightBounds === undefined) ? 3 * suburbNameHeadingBounds.width : (rightBounds.x - suburbNameHeadingBounds.x - suburbNameHeadingBounds.width),
             height: suburbNameHeadingBounds.height + 2 * Tolerance
         };
-        suburbName = elements.filter(element => getPercentageOfElementInRectangle(element, suburbNameBounds) > 90).map(element => element.text).join(" ");
+        suburbName = elements.filter(element => getPercentageOfElementInRectangle(element, suburbNameBounds) > 75).map(element => element.text).join(" ");
         let suburbNameElements = await parseImage(composeImage(imageInfos, suburbNameBounds), suburbNameBounds, "deu");  // use German so that "ü" characters are recognised
         console.log(`Before: ${suburbName}`);
         suburbName = suburbNameElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
-        console.log(`Before: ${suburbName}`);
+        console.log(` After: ${suburbName}`);
     }
 
     // Get the title.
@@ -844,7 +702,7 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
             width: (rightBounds === undefined) ? 10 * titleHeadingBounds.width : (rightBounds.x - titleHeadingBounds.x - titleHeadingBounds.width),
             height: titleHeadingBounds.height + 2 * Tolerance
         };
-        title = elements.filter(element => getPercentageOfElementInRectangle(element, titleBounds) > 90).map(element => element.text).join(" ");
+        title = elements.filter(element => getPercentageOfElementInRectangle(element, titleBounds) > 75).map(element => element.text).join(" ");
     }
 
     // Get the hundred.
@@ -857,7 +715,7 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
             width: (rightBounds === undefined) ? 5 * hundredHeadingBounds.width : (rightBounds.x - hundredHeadingBounds.x - hundredHeadingBounds.width),
             height: hundredHeadingBounds.height + 2 * Tolerance
         };
-        hundred = elements.filter(element => getPercentageOfElementInRectangle(element, hundredBounds) > 90).map(element => element.text).join(" ");
+        hundred = elements.filter(element => getPercentageOfElementInRectangle(element, hundredBounds) > 75).map(element => element.text).join(" ");
     }
 
     // Construct the address.
@@ -883,6 +741,11 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
     if (hundred !== "")
         legalDescriptionElements.push(`Hundred ${hundred}`);
     let legalDescription = legalDescriptionElements.join(", ");
+
+console.log(`Description: ${description}`);
+console.log(`      Legal: ${legalDescription}`);
+console.log(`    Address: ${address}`);
+console.log(`       Date: ${(receivedDate !== undefined && receivedDate.isValid()) ? receivedDate.format("YYYY-MM-DD") : ""}`);
 
     return {
         applicationNumber: applicationNumber,
@@ -1287,8 +1150,8 @@ async function parseImage(image: any, bounds: Rectangle, language: string) {
         let memoryUsage = process.memoryUsage();
         if (memoryUsage.rss > 200 * 1024 * 1024)  // 200 MB
             console.log(`    Memory Usage: rss: ${Math.round(memoryUsage.rss / (1024 * 1024))} MB, heapTotal: ${Math.round(memoryUsage.heapTotal / (1024 * 1024))} MB, heapUsed: ${Math.round(memoryUsage.heapUsed / (1024 * 1024))} MB, external: ${Math.round(memoryUsage.external / (1024 * 1024))} MB`);
-        if (segment.bounds.width * segment.bounds.height > 700 * 700)
-            console.log(`    Parsing a large image with bounds { x: ${Math.round(segment.bounds.x)}, y: ${Math.round(segment.bounds.y)}, width: ${Math.round(segment.bounds.width)}, height: ${Math.round(segment.bounds.height)} }.`);
+        if (segment.bounds.width * scaleFactor * segment.bounds.height * scaleFactor > 700 * 700)
+            console.log(`    Parsing a large image with width ${Math.round(segment.bounds.width * scaleFactor)} and height ${Math.round(segment.bounds.height * scaleFactor)}.`);
 
         // Note that textord_old_baselines is set to 0 so that text that is offset by half the
         // height of the the font is correctly recognised.

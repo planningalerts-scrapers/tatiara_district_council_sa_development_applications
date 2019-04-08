@@ -104,6 +104,7 @@ interface Element extends Rectangle {
 
 interface ImageInfo {
     image: any,
+    scale: number,
     bounds: Rectangle
 }
 
@@ -586,14 +587,22 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
     // Get the description.
 
     let description = "";
+if (developmentDescriptionHeadingBounds === undefined)
+console.log("Description heading bounds is undefined");
     if (developmentDescriptionHeadingBounds !== undefined) {
         let descriptionBounds = {
-            x: developmentDescriptionHeadingBounds.x - developmentDescriptionHeadingBounds.width / 2,
+            x: developmentDescriptionHeadingBounds.x - developmentDescriptionHeadingBounds.width / 4,
             y: developmentDescriptionHeadingBounds.y + developmentDescriptionHeadingBounds.height,
-            width: (rightBounds === undefined) ? 3 * developmentDescriptionHeadingBounds.width : (rightBounds.x - developmentDescriptionHeadingBounds.x),
+            width: (rightBounds === undefined) ? 3 * developmentDescriptionHeadingBounds.width : (rightBounds.x - developmentDescriptionHeadingBounds.x + developmentDescriptionHeadingBounds.width / 4),
             height: (privateCertifierNameHeadingBounds == undefined) ? 2 * developmentDescriptionHeadingBounds.height : (privateCertifierNameHeadingBounds.y - developmentDescriptionHeadingBounds.y - developmentDescriptionHeadingBounds.height - Tolerance)
         };
+console.log(`Description heading bounds: x=${descriptionBounds.x}, y=${descriptionBounds.y}, width=${descriptionBounds.width}, height=${descriptionBounds.height}`);
+
         description = elements.filter(element => getPercentageOfElementInRectangle(element, descriptionBounds) > 90).map(element => element.text).join(" ");
+console.log(`Description Before: ${description}`);
+        let descriptionElements = await parseImage(composeImage(imageInfos, descriptionBounds), descriptionBounds, "eng");
+        description = descriptionElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
+console.log(`Description  After: ${description}`);
     }
 
     // Get the house number.
@@ -711,6 +720,11 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
         console.log(`Application number ${applicationNumber} will be ignored because an address was not found or parsed.  Elements: ${elementSummary}`);
         return undefined;
     }
+    if (/^HD OF /.test(address)) {
+        let elementSummary = elements.map(element => `[${element.text}]`).join("");
+        console.log(`Application number ${applicationNumber} will be ignored because the address only contains a hundred name and not a street name, "${address}".  Elements: ${elementSummary}`);
+        return undefined;
+    }
 
     // Construct the legal description.
 
@@ -727,6 +741,10 @@ async function parseApplicationElements(elements: Element[], startElement: Eleme
         legalDescriptionElements.push(`Hundred ${hundred}`);
     let legalDescription = legalDescriptionElements.join(", ");
 
+console.log(`    Address: ${address}`);
+console.log(`Description: ${description}`);
+console.log(`      Legal: ${legalDescription}`);
+    
     return {
         applicationNumber: applicationNumber,
         address: address,
@@ -992,37 +1010,35 @@ function findStartElements(elements: Element[]) {
 
 // Converts image data from the PDF to a jimp format image.
 
-function convertToJimpImage(image: any) {
+function convertToJimpImage(image: any, bounds: Rectangle = { x: 0, y: 0, width: image.width, height: image.height }) {
     let pixelSize = (8 * image.data.length) / (image.width * image.height);
-    let jimpImage = null;
+    let jimpImage = new (jimp as any)(bounds.width, bounds.height, 0xffffffff);
 
     if (pixelSize === 1) {
         // A monochrome image (one bit per pixel).
 
-        jimpImage = new (jimp as any)(image.width, image.height);
-        for (let x = 0; x < image.width; x++) {
-            for (let y = 0; y < image.height; y++) {
-                let index = y * (image.width / 8);
-                let bitIndex = x % 8;
-                let byteIndex = (x - bitIndex) / 8;
+        let black = jimp.rgbaToInt(0, 0, 0, 255);  // black pixel
+        for (let x = 0; x < bounds.width; x++) {
+            for (let y = 0; y < bounds.height; y++) {
+                let index = (bounds.y + y) * (image.width / 8);
+                let bitIndex = (bounds.x + x) % 8;
+                let byteIndex = (bounds.x + x - bitIndex) / 8;
                 index += byteIndex;
-                let color = null;
                 if ((image.data[index] & (128 >> bitIndex)) === 0)
-                    color = jimp.rgbaToInt(0, 0, 0, 255);  // black pixel
-                else
-                    color = jimp.rgbaToInt(255, 255, 255, 255);  // white pixel
-                jimpImage.setPixelColor(color, x, y);
+                    jimpImage.setPixelColor(black, x, y);
             }
         }
     } else {
         // Assume a 24 bit colour image (3 bytes per pixel).
 
-        jimpImage = new (jimp as any)(image.width, image.height);
-        for (let x = 0; x < image.width; x++) {
-            for (let y = 0; y < image.height; y++) {
-                let index = (y * image.width * 3) + (x * 3);
-                let color = jimp.rgbaToInt(image.data[index], image.data[index + 1], image.data[index + 2], 255);
-                jimpImage.setPixelColor(color, x, y);
+        for (let x = 0; x < bounds.width; x++) {
+            for (let y = 0; y < bounds.height; y++) {
+                let index = ((bounds.y + y) * image.width * 3) + ((bounds.x + x) * 3);
+                let r = image.data[index];
+                let g = image.data[index + 1];
+                let b = image.data[index + 2];
+                if (r < 254 || g < 254 || b < 254)  // only ignore white and practically white
+                    jimpImage.setPixelColor(jimp.rgbaToInt(r, g, b, 255), x, y);
             }
         }
     }
@@ -1043,6 +1059,8 @@ function ceiling(rectangle: Rectangle) {
 
 // Composes all the images that overlap the specified bounds into a single image.
 
+let scaledImageCount = 0;
+
 function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle) {
     compositeImageBounds = ceiling(compositeImageBounds);
     let compositeImage = new (jimp as any)(compositeImageBounds.width, compositeImageBounds.height, 0xffffffff);
@@ -1051,15 +1069,62 @@ function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle) 
 
     for (let imageInfo of imageInfos) {
         let image = imageInfo.image;
-        let imageBounds = ceiling(imageInfo.bounds);
+        let imageScale = imageInfo.scale;
 
+console.log(`Image scale: ${imageScale}`);
+
+        let imageBounds = ceiling({
+            x: imageInfo.bounds.x * imageScale,
+            y: imageInfo.bounds.y * imageScale,
+            width: imageInfo.bounds.width * imageScale,
+            height: imageInfo.bounds.height * imageScale
+        });
+        
         let intersectingBounds = intersect(imageBounds, compositeImageBounds);
         if (getArea(intersectingBounds) <= 0)
             continue;
 
+        // Scale and add an image that requires scaling.
+
+        if (imageScale != 1.0) {
+            let unscaledCompositeBounds = {
+                x: compositeImageBounds.x / imageScale,
+                y: compositeImageBounds.y / imageScale,
+                width: compositeImageBounds.width / imageScale,
+                height: compositeImageBounds.height / imageScale
+            };
+
+            let unscaledIntersectingBounds = ceiling(intersect(imageInfo.bounds, unscaledCompositeBounds));
+            let unscaledImage = convertToJimpImage(image, unscaledIntersectingBounds);
+
+console.log("Writing scaled image.");
+scaledImageCount++;            
+unscaledImage.write(`C:\\Temp\\Tatiara\\UnscaledCompositeImage.${scaledImageCount}.png`); 
+            let scaledImage = unscaledImage.scale(imageScale, jimp.RESIZE_BEZIER);
+scaledImage.write(`C:\\Temp\\Tatiara\\ScaledCompositeImage.${scaledImageCount}.png`); 
+
+            for (let x = 0; x < intersectingBounds.width; x++) {
+                for (let y = 0; y < intersectingBounds.height; y++) {       
+                    let value = scaledImage.getPixelColor(x, y);
+                    let color = (jimp as any).intToRGBA(value);
+                    if (color.r < 248 || color.g < 248 || color.b < 248) {  // ignore white and just off-white
+                        let compositeImageX = intersectingBounds.x - compositeImageBounds.x + x;
+                        let compositeImageY = intersectingBounds.y - compositeImageBounds.y + y;
+                        compositeImage.setPixelColor(value, compositeImageX, compositeImageY);
+                    }
+                }
+            }
+compositeImage.write(`C:\\Temp\\Tatiara\\AppliedToCompositeImage.${scaledImageCount}.png`); 
+            continue;
+        }
+
+        // Add an image that has not been scaled.
+
         let pixelSize = (8 * image.data.length) / (image.width * image.height);
         if (pixelSize === 1) {
             // A monochrome image (one bit per pixel).
+
+            let black = jimp.rgbaToInt(0, 0, 0, 255);  // black pixel
 
             for (let x = 0; x < intersectingBounds.width; x++) {
                 for (let y = 0; y < intersectingBounds.height; y++) {
@@ -1070,15 +1135,14 @@ function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle) 
                     let bitIndex = imageX % 8;
                     let byteIndex = (imageX - bitIndex) / 8;
                     index += byteIndex;
-                    let color = null;
-                    if ((image.data[index] & (128 >> bitIndex)) === 0)
-                        color = jimp.rgbaToInt(0, 0, 0, 255);  // black pixel
-                    else
-                        color = jimp.rgbaToInt(255, 255, 255, 255);  // white pixel
 
-                    let compositeImageX = intersectingBounds.x - compositeImageBounds.x + x;
-                    let compositeImageY = intersectingBounds.y - compositeImageBounds.y + y;
-                    compositeImage.setPixelColor(color, compositeImageX, compositeImageY);
+                    // Treat white as transparent, so only write black pixels.
+
+                    if ((image.data[index] & (128 >> bitIndex)) === 0) {  // black pixel
+                        let compositeImageX = intersectingBounds.x - compositeImageBounds.x + x;
+                        let compositeImageY = intersectingBounds.y - compositeImageBounds.y + y;
+                        compositeImage.setPixelColor(black, compositeImageX, compositeImageY);
+                    }
                 }
             }
         } else {
@@ -1090,17 +1154,31 @@ function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle) 
                     let imageY = intersectingBounds.y - imageBounds.y + y;
 
                     let index = (imageY * image.width * 3) + (imageX * 3);
-                    let color = jimp.rgbaToInt(image.data[index], image.data[index + 1], image.data[index + 2], 255);
-                    let compositeImageX = intersectingBounds.x - compositeImageBounds.x + x;
-                    let compositeImageY = intersectingBounds.y - compositeImageBounds.y + y;
-                    compositeImage.setPixelColor(color, compositeImageX, compositeImageY);
+                    let r = image.data[index];
+                    let g = image.data[index + 1];
+                    let b = image.data[index + 2];
+
+                    // Treat white (or off white) as transparent.
+
+                    if (r < 248 || g < 248 || b < 248) {  // ignore white and just off-white
+                        let color = jimp.rgbaToInt(r, g, b, 255);
+                        let compositeImageX = intersectingBounds.x - compositeImageBounds.x + x;
+                        let compositeImageY = intersectingBounds.y - compositeImageBounds.y + y;
+                        compositeImage.setPixelColor(color, compositeImageX, compositeImageY);
+                    }
                 }
             }
         }
     }
 
+console.log("Writing composite image.");
+imageCount++;
+compositeImage.write(`C:\\Temp\\Tatiara\\CompositeImage.${imageCount}.png`);
+
     return compositeImage;
 }
+
+let imageCount = 0;
 
 // Parses text from an image.
 
@@ -1118,7 +1196,7 @@ async function parseImage(image: any, bounds: Rectangle, language: string) {
         let scaleFactor = 1.0;
         if (segment.bounds.width * segment.bounds.height > 1000 * 1000) {
             scaleFactor = 0.5;
-            console.log(`    Scaling a large image (${segment.bounds.width}×${segment.bounds.height}) by ${scaleFactor} to reduce memory usage.`);
+            console.log(`    Scaling a large image segment (${segment.bounds.width}×${segment.bounds.height}) by ${scaleFactor} to reduce memory usage.`);
             segment.image = segment.image.scale(scaleFactor, jimp.RESIZE_BEZIER);
         }
 
@@ -1131,7 +1209,7 @@ async function parseImage(image: any, bounds: Rectangle, language: string) {
         if (memoryUsage.rss > 200 * 1024 * 1024)  // 200 MB
             console.log(`    Memory Usage: rss: ${Math.round(memoryUsage.rss / (1024 * 1024))} MB, heapTotal: ${Math.round(memoryUsage.heapTotal / (1024 * 1024))} MB, heapUsed: ${Math.round(memoryUsage.heapUsed / (1024 * 1024))} MB, external: ${Math.round(memoryUsage.external / (1024 * 1024))} MB`);
         if (segment.bounds.width * scaleFactor * segment.bounds.height * scaleFactor > 700 * 700)
-            console.log(`    Parsing a large image with width ${Math.round(segment.bounds.width * scaleFactor)} and height ${Math.round(segment.bounds.height * scaleFactor)}.`);
+            console.log(`    Parsing a large image segment with width ${Math.round(segment.bounds.width * scaleFactor)} and height ${Math.round(segment.bounds.height * scaleFactor)}.`);
 
         // Note that textord_old_baselines is set to 0 so that text that is offset by half the
         // height of the the font is correctly recognised.
@@ -1200,6 +1278,7 @@ async function parsePdf(url: string) {
 
         let elements: Element[] = [];
         let imageInfos: ImageInfo[] = [];
+        let isFirstImage = true;
 
         for (let index = 0; index < operators.fnArray.length; index++) {
             if (operators.fnArray[index] !== pdfjs.OPS.paintImageXObject && operators.fnArray[index] !== pdfjs.OPS.paintImageMaskXObject)
@@ -1224,8 +1303,8 @@ async function parsePdf(url: string) {
                 continue;
 
             // Use the transform to translate the X and Y co-ordinates, but assume that the width
-            // and height are consistent between all images and do not need to be scaled.  This is
-            // almost always the case; only the first image is sometimes an exception (with a
+            // and height are consistent between all images and do not need to be scaled.  This
+            // is almost always the case; only the first image is sometimes an exception (with a
             // scale factor of 2.083333 instead of 4.166666).
 
             let bounds: Rectangle = {
@@ -1234,12 +1313,29 @@ async function parsePdf(url: string) {
                 width: image.width,
                 height: image.height
             };
-           
-            imageInfos.push({ image: image, bounds: bounds });
+
+            // The first image is typically at a different scale (2.083333 instead of 4.166666).
+
+            let scale = image.height / transform[3];
+            if (scale < 2.5 && isFirstImage && image.height > 1000 && image.width > 1000)
+                scale = 2.0;
+            else
+                scale = 1.0;
+            isFirstImage = false;
+
+            imageInfos.push({ image: image, scale: scale, bounds: bounds });
 
             // Parse the text from the image.
 
-            elements = elements.concat(await parseImage(convertToJimpImage(image), bounds, "eng"));
+pageImageCount++;
+console.log(`Converting to jimp image ${pageImageCount}.`);
+console.log(`    [0]=${transform[0]}, [1]=${transform[1]}, [2]=${transform[2]}, [3]=${transform[3]}, [4]=${transform[4]}, [5]=${transform[5]}`);
+console.log(`    bounds x=${bounds.x}, y=${bounds.y}, width=${bounds.width}, height=${bounds.height}`);
+let jimpImage = convertToJimpImage(image);
+elements = elements.concat(await parseImage(jimpImage, bounds, "eng"));
+jimpImage.write(`C:\\Temp\\Tatiara\\Page.${pageIndex + 1}.Image.${pageImageCount}.png`);
+
+            // elements = elements.concat(await parseImage(convertToJimpImage(image), bounds, "eng"));
             if (global.gc)
                 global.gc();
         }
@@ -1261,6 +1357,9 @@ async function parsePdf(url: string) {
 
         let elementComparer = (a, b) => (Math.abs(a.y - b.y) < Tolerance) ? ((a.x > b.x) ? 1 : ((a.x < b.x) ? -1 : 0)) : ((a.y > b.y) ? 1 : -1);
         elements.sort(elementComparer);
+
+console.log("Writing page elements.");
+fs.writeFileSync(`C:\\Temp\\Tatiara\\PageElements.Page${pageIndex + 1}.txt`, JSON.stringify(elements));
 
         // Group the elements into sections based on where the "Application No" text starts (and
         // any other element the "Application No" elements line up with horizontally with a margin
@@ -1312,6 +1411,8 @@ async function parsePdf(url: string) {
 
     return developmentApplications;
 }
+
+let pageImageCount = 0;
 
 // Gets a random integer in the specified range: [minimum, maximum).
 

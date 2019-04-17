@@ -774,19 +774,19 @@ function findStartElements(elements: Element[]) {
 
 // Converts image data from the PDF to a jimp format image.
 
-function convertToJimpImage(image: any, bounds: Rectangle = { x: 0, y: 0, width: image.width, height: image.height }) {
+function convertToJimpImage(image: any) {
     let pixelSize = (8 * image.data.length) / (image.width * image.height);
-    let jimpImage = new (jimp as any)(bounds.width, bounds.height, 0xffffffff);  // solid white image
+    let jimpImage = new (jimp as any)(image.width, image.height, 0xffffffff);  // solid white image
 
     if (pixelSize === 1) {
         // A monochrome image (one bit per pixel).
 
         let black = jimp.rgbaToInt(0, 0, 0, 255);  // black pixel
-        for (let x = 0; x < bounds.width; x++) {
-            for (let y = 0; y < bounds.height; y++) {
-                let index = (bounds.y + y) * (image.width / 8);
-                let bitIndex = (bounds.x + x) % 8;
-                let byteIndex = (bounds.x + x - bitIndex) / 8;
+        for (let x = 0; x < image.width; x++) {
+            for (let y = 0; y < image.height; y++) {
+                let index = y * (image.width / 8);
+                let bitIndex = x % 8;
+                let byteIndex = (x - bitIndex) / 8;
                 index += byteIndex;
                 if ((image.data[index] & (128 >> bitIndex)) === 0)
                     jimpImage.setPixelColor(black, x, y);
@@ -795,9 +795,9 @@ function convertToJimpImage(image: any, bounds: Rectangle = { x: 0, y: 0, width:
     } else {
         // Assume a 24 bit colour image (3 bytes per pixel).
 
-        for (let x = 0; x < bounds.width; x++) {
-            for (let y = 0; y < bounds.height; y++) {
-                let index = ((bounds.y + y) * image.width * 3) + ((bounds.x + x) * 3);
+        for (let x = 0; x < image.width; x++) {
+            for (let y = 0; y < image.height; y++) {
+                let index = (y * image.width * 3) + (x * 3);
                 let r = image.data[index];
                 let g = image.data[index + 1];
                 let b = image.data[index + 2];
@@ -831,24 +831,18 @@ function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle) 
 
     for (let imageInfo of imageInfos) {
         let image = imageInfo.image;
-        let imageBounds = imageInfo.bounds;
+        let imageBounds = ceiling(imageInfo.bounds);
         
-console.log(imageBounds);
-let testImage = convertToJimpImage(image);
-testImage.write(`C:\\Temp\\Tatiara\\StepBack\\ImageInfos.${++imageCount}.png`);
-
         let intersectingBounds = intersect(imageBounds, compositeImageBounds);
         if (getArea(intersectingBounds) <= 0)
             continue;
-console.log("intersectingBounds");
-console.log(intersectingBounds);
 
         // Add an image.
 
         let pixelSize = (8 * image.data.length) / (image.width * image.height);
         if (pixelSize === 1) {
             // A monochrome image (one bit per pixel).
-console.log("1 Bit Pixel Size");
+
             let black = jimp.rgbaToInt(0, 0, 0, 255);  // black pixel
 
             for (let x = 0; x < intersectingBounds.width; x++) {
@@ -872,8 +866,7 @@ console.log("1 Bit Pixel Size");
             }
         } else {
             // Assume a 24 bit colour image (3 bytes per pixel).
-console.log("24 Bit Pixel Size");
-    
+
             for (let x = 0; x < intersectingBounds.width; x++) {
                 for (let y = 0; y < intersectingBounds.height; y++) {
                     let imageX = intersectingBounds.x - imageBounds.x + x;
@@ -897,11 +890,8 @@ console.log("24 Bit Pixel Size");
         }
     }
 
-compositeImage.write(`C:\\Temp\\Tatiara\\StepBack\\CompositeImage.${++imageCount}.png`);
-
     return compositeImage;
 }
-let imageCount = 0;
 
 // Parses text from an image.
 
@@ -914,7 +904,6 @@ async function parseImage(image: any, bounds: Rectangle, language: string) {
 
     let elements: Element[] = [];
     for (let segment of segments) {
-segment.image.write(`C:\\Temp\\Tatiara\\StepBack\\Segment.${++imageCount}.png`);
         // Attempt to avoid using too much memory by scaling down large images.
 
         let scaleFactor = 1.0;
@@ -1125,7 +1114,6 @@ console.log(`    Street Name: ${streetName}`);
             width: (rightBounds === undefined) ? 3 * suburbNameHeadingBounds.width : (rightBounds.x - suburbNameHeadingBounds.x - suburbNameHeadingBounds.width),
             height: suburbNameHeadingBounds.height + 2 * Tolerance
         };
-console.log(suburbNameBounds);
         let suburbNameElements = await parseImage(composeImage(imageInfos, suburbNameBounds), suburbNameBounds, "deu");  // use German so that "ü" characters are recognised
         suburbName = suburbNameElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
     }
@@ -1286,9 +1274,6 @@ async function parsePdf(url: string) {
             imageInfos.push({ image: image, bounds: bounds });
 
             // Parse the text from the image.
-
-let testImage = convertToJimpImage(image);
-testImage.write(`C:\\Temp\\Tatiara\\StepBack\\OriginalImage.${++imageCount}.png`);
 
             elements = elements.concat(await parseImage(convertToJimpImage(image), bounds, "eng"));
             if (global.gc)

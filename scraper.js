@@ -1107,7 +1107,7 @@ async function main() {
         selectedPdfUrls.push(pdfUrls[getRandom(0, pdfUrls.length)]);
     if (getRandom(0, 2) === 0)
         selectedPdfUrls.reverse();
-    for (let pdfUrl of ["http://www.tatiara.sa.gov.au/webdata/resources/files/1-10-18%20to%2031-12-18.pdf"]) {
+    for (let pdfUrl of ["https://www.tatiara.sa.gov.au/webdata/resources/files/1-7-18%20to%2030-9-18.pdf"]) {
         console.log(`Parsing document: ${pdfUrl}`);
         let developmentApplications = await parsePdf(pdfUrl);
         console.log(`Parsed ${developmentApplications.length} development application(s) from document: ${pdfUrl}`);

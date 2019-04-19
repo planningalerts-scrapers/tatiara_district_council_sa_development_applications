@@ -118,31 +118,31 @@ interface ImageInfo {
     bounds: Rectangle
 }
 
-// Rotates a rectangle clockwise relative to the specified origin.
+// Rotates a rectangle clockwise.
 
 const Origin = { x: 0, y: 0 };
 
-function rotateImage(bounds: Rectangle, origin: Point, degrees: number) {
+function rotateImage(bounds: Rectangle, degrees: number) {
     if (degrees !== 90)
         return { ...bounds };
     
     return {
-        x: origin.y - bounds.y - bounds.height,
-        y: bounds.x - origin.x,
+        x: Origin.y - bounds.y - bounds.height,
+        y: bounds.x - Origin.x,
         width: bounds.height,
         height: bounds.width
     }
 }
 
-// Reverses the above clockwise rotation of a rectangle relative to the specified origin.
+// Reverses the above clockwise rotation of a rectangle.
 
-function unrotateImage(bounds: Rectangle, origin: Point, degrees: number) {
+function unrotateImage(bounds: Rectangle, degrees: number) {
     if (degrees !== 90)
         return { ...bounds };
 
     return {
-        x: origin.x + bounds.y,
-        y: origin.y - bounds.width - bounds.x,
+        x: Origin.x + bounds.y,
+        y: Origin.y - bounds.width - bounds.x,
         width: bounds.height,
         height: bounds.width
     }
@@ -213,7 +213,7 @@ function getArea(rectangle: Rectangle) {
     return rectangle.width * rectangle.height;
 }
 
-// Calculates the square of the Euclidean distance between two elements.
+// Calculates the square of the distance between two elements.
 
 function calculateDistance(element1: Element, element2: Element) {
     let point1 = { x: element1.x + element1.width, y: element1.y + element1.height / 2 };
@@ -304,12 +304,12 @@ function correctSpelling(description: string) {
     let threshold: number;
     if (spaceIndex <= 2)
         return description;  // avoid trying to correct very short words
-    else if (spaceIndex == 3)
-        threshold = 1;
-    else if (spaceIndex == 4)
-        threshold = 2;
-    else
+    else if (spaceIndex <= 4)
+        threshold = 2;  // for example, correct "Jmp shed" to "Pump shed"
+    else if (spaceIndex <= 8)
         threshold = 3;
+    else
+        threshold = 4;
 
     let word = description.substring(0, spaceIndex).replace(/[^A-Za-z\s]/g, "");
     word = <string>didYouMean(word, Words, { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: threshold, trimSpaces: true });
@@ -548,8 +548,8 @@ function parseAddress(houseNumber: string, streetName: string, suburbName: strin
 // house number and fewer spelling errors appear at the start of an array.
 
 function addressComparer(a, b) {
-    // As long as there are one or two spelling errors then prefer the address with a
-    // house number (even if it has more spelling errors).
+    // As long as there are one or two spelling errors then prefer the address with a house
+    // number (even if it has more spelling errors).
 
     if (a.threshold <= 2 && b.threshold <= 2) {
         if (a.houseNumber === "" && b.houseNumber !== "")
@@ -623,7 +623,7 @@ function segmentImage(jimpImage: any) {
 
     // Extract images delineated by the white space.
 
-    let segments: { image: jimp, bounds: Rectangle }[] = [];
+    let segments: ImageInfo[] = [];
     for (let rectangle of rectangles) {
         let croppedJimpImage: jimp = new (jimp as any)(rectangle.width, rectangle.height);
         croppedJimpImage.blit(jimpImage, 0, 0, rectangle.x, rectangle.y, rectangle.width, rectangle.height);            
@@ -742,8 +742,7 @@ function segmentImageHorizontally(jimpImage: any, bounds: Rectangle) {
 // encompasses all of those elements.
 
 function findTextBounds(elements: Element[], text: string) {
-    // Examine all the elements on the page that being with the same character as the requested
-    // text.
+    // Examine all elements on the page.
 
     let condensedText = text.replace(/[^A-Za-z0-9\s]/g, "").toLowerCase();
 
@@ -899,7 +898,7 @@ function convertToJimpImage(image: any, degrees: number) {
 // Composes all the images that overlap the specified bounds (producing a single image).
 
 function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle, degrees: number) {
-    compositeImageBounds = ceiling(unrotateImage(compositeImageBounds, Origin, degrees));
+    compositeImageBounds = ceiling(unrotateImage(compositeImageBounds, degrees));
     let compositeImage = new (jimp as any)(compositeImageBounds.width, compositeImageBounds.height, 0xffffffff);  // solid white
 
     // Find all images that intersect the specified bounds.
@@ -1308,7 +1307,6 @@ async function parsePdf(url: string) {
         // Find and parse any images in the current PDF page.
 
         let imageInfos: ImageInfo[] = [];
-        let isFirstImage = true;
 
         for (let index = 0; index < operators.fnArray.length; index++) {
             if (operators.fnArray[index] !== pdfjs.OPS.paintImageXObject && operators.fnArray[index] !== pdfjs.OPS.paintImageMaskXObject)
@@ -1349,9 +1347,8 @@ async function parsePdf(url: string) {
             // the odd letter or two).
 
             let scale = image.height / transform[3];
-            if (scale < 2.5 && isFirstImage && image.height > 1000 && image.width > 1000)
+            if (scale < 2.5 && imageInfos.length === 0 && image.height > 1000 && image.width > 1000)
                 continue;  // ignore the image
-            isFirstImage = false;
 
             imageInfos.push({ image: image, bounds: bounds });
         }
@@ -1361,7 +1358,7 @@ async function parsePdf(url: string) {
         let degrees = 0;  // assume no page rotation
         let elements: Element[] = [];
         for (let imageInfo of imageInfos) {
-            elements = elements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, Origin, degrees), "eng"));
+            elements = elements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, degrees), "eng"));
             if (global.gc)
                 global.gc();
         }
@@ -1370,17 +1367,17 @@ async function parsePdf(url: string) {
 
         if (findStartElements(elements).length === 0) {
             degrees = 90;  // 90 degree rotation
-            console.log(`No development applications were found so retrying with the page rotated by ${degrees} degrees.`)
+            console.log(`    No development applications were found so retrying with the page rotated by ${degrees} degrees.`)
             elements = [];
             for (let imageInfo of imageInfos) {
-                elements = elements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, Origin, degrees), "eng"));
+                elements = elements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, degrees), "eng"));
                 if (global.gc)
                     global.gc();
             }
             if (findStartElements(elements).length === 0)
-                console.log(`No development applications were found when the page was rotated by ${degrees} degrees.`);
+                console.log(`    No development applications were found when the page was rotated by ${degrees} degrees.`);
             else                    
-                console.log(`Found applications when the page was rotated by ${degrees} degrees.`);
+                console.log(`    Found applications when the page was rotated by ${degrees} degrees.`);
         }
 
         // Release the memory used by the PDF now that it is no longer required (it will be
@@ -1505,16 +1502,15 @@ async function main() {
     // Select the most recent PDF.  And randomly select one other PDF (avoid processing all PDFs
     // at once because this may use too much memory, resulting in morph.io terminating the current
     // process).
+    //
+    // let selectedPdfUrls: string[] = [];
+    // selectedPdfUrls.push(pdfUrls.shift());
+    // if (pdfUrls.length > 0)
+    //     selectedPdfUrls.push(pdfUrls[getRandom(0, pdfUrls.length)]);
+    // if (getRandom(0, 2) === 0)
+    //     selectedPdfUrls.reverse();
 
-    let selectedPdfUrls: string[] = [];
-    selectedPdfUrls.push(pdfUrls.shift());
-    if (pdfUrls.length > 0)
-        selectedPdfUrls.push(pdfUrls[getRandom(0, pdfUrls.length)]);
-    if (getRandom(0, 2) === 0)
-        selectedPdfUrls.reverse();
-
-    // for (let pdfUrl of [ "https://www.tatiara.sa.gov.au/webdata/resources/files/1-7-18%20to%2030-9-18.pdf" ]) {
-    for (let pdfUrl of [ "https://www.tatiara.sa.gov.au/webdata/resources/files/1-10-18%20to%2031-12-18.pdf" ]) {
+    for (let pdfUrl of pdfUrls) {
         console.log(`Parsing document: ${pdfUrl}`);
         let developmentApplications = await parsePdf(pdfUrl);
         console.log(`Parsed ${developmentApplications.length} development application(s) from document: ${pdfUrl}`);

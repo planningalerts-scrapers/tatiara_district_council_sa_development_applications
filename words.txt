@@ -26,6 +26,7 @@ Four
 Free
 Freestanding
 Hay
+Hay/Machinery
 Illuminated
 Implement
 Inground
@@ -35,10 +36,12 @@ Intensive
 Internal
 Land
 Machinery
+Machinery/Hay
 New
 Office
 Offices
 Pergola
+Pergola/Verandah
 Pool
 Private
 Pump
@@ -67,5 +70,6 @@ Three
 Transportable
 Two
 Verandah
+Verandah/Pergola
 Warehouse
 Workshop

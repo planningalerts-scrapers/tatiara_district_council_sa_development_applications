@@ -1108,9 +1108,7 @@ async function parseApplicationElements(elements: Element[], informationUrl: str
             height: (privateCertifierNameHeadingBounds == undefined) ? 2 * developmentDescriptionHeadingBounds.height : (privateCertifierNameHeadingBounds.y - developmentDescriptionHeadingBounds.y - developmentDescriptionHeadingBounds.height - Tolerance)
         };
         description = elements.filter(element => getPercentageOfElementInRectangle(element, descriptionBounds) > 90).map(element => element.text).join(" ");
-console.log(`Description Before: ${description}`);
         description = correctSpelling(description);
-console.log(` Description After: ${description}`);
     }
 
     // Get the house number.
@@ -1128,7 +1126,6 @@ console.log(` Description After: ${description}`);
         if (houseNumber === "")
             houseNumber = elements.filter(element => getPercentageOfElementInRectangle(element, houseNumberBounds) > 90).map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ");  // fallback
     }
-console.log(`    House Number: ${houseNumber}`);
 
     // Get the lot.
 
@@ -1184,7 +1181,6 @@ console.log(`    House Number: ${houseNumber}`);
         if (streetName === "")
             streetName = elements.filter(element => getPercentageOfElementInRectangle(element, streetNameBounds) > 90).map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ");  // fallback
     }
-console.log(`    Street Name: ${streetName}`);
 
     // Get the suburb.
 
@@ -1201,7 +1197,6 @@ console.log(`    Street Name: ${streetName}`);
         if (suburbName === "")
             suburbName = elements.filter(element => getPercentageOfElementInRectangle(element, suburbNameBounds) > 90).map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ");  // fallback
     }
-console.log(`    Suburb Name: ${suburbName}`);
 
     // Get the title.
 
@@ -1258,10 +1253,6 @@ console.log(`    Suburb Name: ${suburbName}`);
         legalDescriptionElements.push(`Hundred ${hundred}`);
     let legalDescription = legalDescriptionElements.join(", ");
 
-console.log(`    Address: ${address}`);
-console.log(`Description: ${description}`);
-console.log(`      Legal: ${legalDescription}`);
-    
     return {
         applicationNumber: applicationNumber,
         address: address,

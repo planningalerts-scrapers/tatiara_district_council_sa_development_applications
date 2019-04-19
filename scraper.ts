@@ -42,6 +42,10 @@ let StreetSuffixes = null;
 let StreetNames = null;
 let HundredNames = null;
 
+// Spelling of common words.
+
+let Words = null;
+
 // Sets up an sqlite database.
 
 async function initializeDatabase() {
@@ -93,6 +97,13 @@ interface Rectangle {
     height: number
 }
 
+// A 2D point.
+
+interface Point {
+    x: number,
+    y: number
+}
+
 // An element (consisting of text and a bounding rectangle) in a PDF document.
 
 interface Element extends Rectangle {
@@ -105,6 +116,46 @@ interface Element extends Rectangle {
 interface ImageInfo {
     image: any,
     bounds: Rectangle
+}
+
+// Rotates a rectangle clockwise relative to the specified origin.
+
+const Origin = { x: 5000, y: 5000 };
+
+function rotateImage(bounds: Rectangle, origin: Point, degrees: number) {
+    if (degrees !== 90)
+        return { ...bounds };
+    
+    return {
+        x: origin.y - bounds.y - bounds.height,
+        y: bounds.x - origin.x,
+        width: bounds.height,
+        height: bounds.width
+    }
+}
+
+// Reverses the above clockwise rotation of a rectangle relative to the specified origin.
+
+function unrotateImage(bounds: Rectangle, origin: Point, degrees: number) {
+    if (degrees !== 90)
+        return { ...bounds };
+    return {
+        x: origin.x + bounds.y,
+        y: origin.y - bounds.width - bounds.x,
+        width: bounds.height,
+        height: bounds.width
+    }
+}
+
+// Expands a rectangle so that its x, y, width and height values become integers.
+
+function ceiling(rectangle: Rectangle) {
+    return {
+        x: Math.floor(rectangle.x),
+        y: Math.floor(rectangle.y),
+        width: Math.ceil(rectangle.width + rectangle.x - Math.floor(rectangle.x)),
+        height: Math.ceil(rectangle.height + rectangle.y - Math.floor(rectangle.y))
+    }
 }
 
 // Gets the highest Y co-ordinate of all elements that are considered to be in the same row as
@@ -228,6 +279,34 @@ function readAddressInformation() {
     HundredNames = [];
     for (let line of fs.readFileSync("hundrednames.txt").toString().replace(/\r/g, "").trim().split("\n"))
         HundredNames.push(line.trim().toUpperCase());
+}
+
+// Corrects the spelling of the first word in the description (because it is often truncated).
+
+function correctSpelling(description: string) {
+    // Ignore a space close to the start of the string.
+
+    let spaceIndex = description.indexOf(" ");
+    if (spaceIndex === 1 || spaceIndex === 2)
+        spaceIndex = description.indexOf(" ", spaceIndex + 1);
+    if (spaceIndex < 0)
+        spaceIndex = description.length;
+
+    // Avoid trying to correct very short words.
+
+    if (spaceIndex <= 2)
+        return description;
+
+    let threshold;
+    if (spaceIndex == 3)
+        threshold = 1;
+    else if (spaceIndex == 4)
+        threshold = 2;
+    else
+        threshold = 3;
+
+    let word = didYouMean(description.substring(0, spaceIndex), Words, { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: threshold, trimSpaces: true });
+    return (word === null) ? description : `${word}${description.substring(spaceIndex)}`;
 }
 
 // Constructs the full address string based on the specified address components.
@@ -774,11 +853,11 @@ function findStartElements(elements: Element[]) {
 
 // Converts image data from the PDF to a jimp format image.
 
-function convertToJimpImage(image: any) {
+function convertToJimpImage(image: any, degrees: number) {
     let pixelSize = (8 * image.data.length) / (image.width * image.height);
     let jimpImage = new (jimp as any)(image.width, image.height, 0xffffffff);  // solid white image
 
-    if (pixelSize === 1) {
+    if (pixelSize === 1) {        
         // A monochrome image (one bit per pixel).
 
         let black = jimp.rgbaToInt(0, 0, 0, 255);  // black pixel
@@ -807,24 +886,14 @@ function convertToJimpImage(image: any) {
         }
     }
 
+    jimpImage.rotate(degrees);
     return jimpImage;
-}
-
-// Expands a rectangle so that its x, y, width and height values become integers.
-
-function ceiling(rectangle: Rectangle) {
-    return {
-        x: Math.floor(rectangle.x),
-        y: Math.floor(rectangle.y),
-        width: Math.ceil(rectangle.width + rectangle.x - Math.floor(rectangle.x)),
-        height: Math.ceil(rectangle.height + rectangle.y - Math.floor(rectangle.y))
-    }
 }
 
 // Composes all the images that overlap the specified bounds into a single image.
 
-function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle) {
-    compositeImageBounds = ceiling(compositeImageBounds);
+function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle, degrees: number) {
+    compositeImageBounds = ceiling(unrotateImage(compositeImageBounds, Origin, degrees));
     let compositeImage = new (jimp as any)(compositeImageBounds.width, compositeImageBounds.height, 0xffffffff);  // solid white
 
     // Find all images that intersect the specified bounds.
@@ -890,6 +959,7 @@ function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle) 
         }
     }
 
+    compositeImage.rotate(degrees);
     return compositeImage;
 }
 
@@ -957,7 +1027,7 @@ async function parseImage(image: any, bounds: Rectangle, language: string) {
 
 // Parses the details from the elements associated with a single development application.
 
-async function parseApplicationElements(elements: Element[], informationUrl: string, imageInfos: ImageInfo[]) {
+async function parseApplicationElements(elements: Element[], informationUrl: string, imageInfos: ImageInfo[], degrees: number) {
     let applicationNumberHeadingBounds = findTextBounds(elements, "Application No");
     let applicationDateHeadingBounds = findTextBounds(elements, "Application Date");
     let applicationReceivedHeadingBounds = findTextBounds(elements, "Application received");
@@ -1033,6 +1103,9 @@ async function parseApplicationElements(elements: Element[], informationUrl: str
             height: (privateCertifierNameHeadingBounds == undefined) ? 2 * developmentDescriptionHeadingBounds.height : (privateCertifierNameHeadingBounds.y - developmentDescriptionHeadingBounds.y - developmentDescriptionHeadingBounds.height - Tolerance)
         };
         description = elements.filter(element => getPercentageOfElementInRectangle(element, descriptionBounds) > 90).map(element => element.text).join(" ");
+        console.log(`Description Before: ${description}`);
+        description = correctSpelling(description);
+        console.log(` Description After: ${description}`);
     }
 
     // Get the house number.
@@ -1045,8 +1118,10 @@ async function parseApplicationElements(elements: Element[], informationUrl: str
             width: (rightBounds === undefined) ? 3 * propertyHouseNumberHeadingBounds.width : (rightBounds.x - propertyHouseNumberHeadingBounds.x - propertyHouseNumberHeadingBounds.width),
             height: propertyHouseNumberHeadingBounds.height
         };
-        let houseNumberElements = await parseImage(composeImage(imageInfos, houseNumberBounds), houseNumberBounds, "deu");  // use German so that "ü" characters are recognised
+        let houseNumberElements = await parseImage(composeImage(imageInfos, houseNumberBounds, degrees), houseNumberBounds, "deu");  // use German so that "ü" characters are recognised
         houseNumber = houseNumberElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
+        if (houseNumber === "")
+            houseNumber = elements.filter(element => getPercentageOfElementInRectangle(element, houseNumberBounds) > 90).map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ");
     }
 console.log(`    House Number: ${houseNumber}`);
 
@@ -1099,8 +1174,10 @@ console.log(`    House Number: ${houseNumber}`);
             width: (rightBounds === undefined) ? 3 * streetNameHeadingBounds.width : (rightBounds.x - streetNameHeadingBounds.x - streetNameHeadingBounds.width),
             height: streetNameHeadingBounds.height + 2 * Tolerance
         };
-        let streetNameElements = await parseImage(composeImage(imageInfos, streetNameBounds), streetNameBounds, "deu");  // use German so that "ü" characters are recognised
+        let streetNameElements = await parseImage(composeImage(imageInfos, streetNameBounds, degrees), streetNameBounds, "deu");  // use German so that "ü" characters are recognised
         streetName = streetNameElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
+        if (streetName === "")
+            streetName = elements.filter(element => getPercentageOfElementInRectangle(element, streetNameBounds) > 90).map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ");
     }
 console.log(`    Street Name: ${streetName}`);
 
@@ -1114,8 +1191,10 @@ console.log(`    Street Name: ${streetName}`);
             width: (rightBounds === undefined) ? 3 * suburbNameHeadingBounds.width : (rightBounds.x - suburbNameHeadingBounds.x - suburbNameHeadingBounds.width),
             height: suburbNameHeadingBounds.height + 2 * Tolerance
         };
-        let suburbNameElements = await parseImage(composeImage(imageInfos, suburbNameBounds), suburbNameBounds, "deu");  // use German so that "ü" characters are recognised
+        let suburbNameElements = await parseImage(composeImage(imageInfos, suburbNameBounds, degrees), suburbNameBounds, "deu");  // use German so that "ü" characters are recognised
         suburbName = suburbNameElements.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ")
+        if (suburbName === "")
+            suburbName = elements.filter(element => getPercentageOfElementInRectangle(element, suburbNameBounds) > 90).map(element => element.text).join(" ").trim().replace(/\s\s+/g, " ");
     }
 console.log(`    Suburb Name: ${suburbName}`);
 
@@ -1224,7 +1303,6 @@ async function parsePdf(url: string) {
 
         // Find and parse any images in the current PDF page.
 
-        let elements: Element[] = [];
         let imageInfos: ImageInfo[] = [];
         let isFirstImage = true;
 
@@ -1272,12 +1350,33 @@ async function parsePdf(url: string) {
             isFirstImage = false;
 
             imageInfos.push({ image: image, bounds: bounds });
+        }
 
-            // Parse the text from the image.
+        // Parse the text from the image.
 
-            elements = elements.concat(await parseImage(convertToJimpImage(image), bounds, "eng"));
+        let degrees = 0;  // assume no page rotation
+        let elements: Element[] = [];
+        for (let imageInfo of imageInfos) {
+            elements = elements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, Origin, degrees), "eng"));
             if (global.gc)
                 global.gc();
+        }
+
+        // Try rotating the page by 90 degrees.
+
+        if (findStartElements(elements).length === 0) {
+            degrees = 90;  // try rotating by 90 degrees
+            console.log(`No development applications were found so retrying rotated by ${degrees} degrees.`)
+            elements = [];
+            for (let imageInfo of imageInfos) {
+                elements = elements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, Origin, degrees), "eng"));
+                if (global.gc)
+                    global.gc();
+            }
+            if (findStartElements(elements).length === 0)
+                console.log(`No development applications were found when rotated by ${degrees} degrees.`);
+            else                    
+                console.log(`Found applications when rotated by ${degrees} degrees.`);
         }
 
         // Release the memory used by the PDF now that it is no longer required (it will be
@@ -1335,7 +1434,7 @@ async function parsePdf(url: string) {
         // the database later instead of being ignored).
 
         for (let applicationElementGroup of applicationElementGroups) {
-            let developmentApplication = await parseApplicationElements(applicationElementGroup.elements, url, imageInfos);
+            let developmentApplication = await parseApplicationElements(applicationElementGroup.elements, url, imageInfos, degrees);
             if (developmentApplication !== undefined) {
                 let suffix = 0;
                 let applicationNumber = developmentApplication.applicationNumber;
@@ -1372,6 +1471,12 @@ async function main() {
 
     readAddressInformation();
 
+    // Spellings of commonly truncated words (at the start of descriptions).
+
+    Words = [];
+    for (let line of fs.readFileSync("words.txt").toString().replace(/\r/g, "").trim().split("\n"))
+        Words.push(line.trim().toUpperCase());
+
     // Retrieve the page that contains the links to the PDFs.
 
     console.log(`Retrieving page: ${DevelopmentApplicationsUrl}`);
@@ -1404,7 +1509,8 @@ async function main() {
     if (getRandom(0, 2) === 0)
         selectedPdfUrls.reverse();
 
-    for (let pdfUrl of [ "http://www.tatiara.sa.gov.au/webdata/resources/files/1-10-18%20to%2031-12-18.pdf" ]) {
+    // for (let pdfUrl of [ "https://www.tatiara.sa.gov.au/webdata/resources/files/1-7-18%20to%2030-9-18.pdf" ]) {
+    for (let pdfUrl of [ "https://www.tatiara.sa.gov.au/webdata/resources/files/1-10-18%20to%2031-12-18.pdf" ]) {
         console.log(`Parsing document: ${pdfUrl}`);
         let developmentApplications = await parsePdf(pdfUrl);
         console.log(`Parsed ${developmentApplications.length} development application(s) from document: ${pdfUrl}`);

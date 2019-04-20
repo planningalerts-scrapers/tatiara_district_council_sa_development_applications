@@ -42,7 +42,7 @@ let StreetSuffixes = null;
 let StreetNames = null;
 let HundredNames = null;
 
-// Spelling of common words.
+// Spellings of common words.
 
 let Words = null;
 
@@ -120,7 +120,7 @@ interface ImageInfo {
 
 // Rotates a rectangle clockwise.
 
-const Origin = { x: 0, y: 0 };
+const Origin: Point = { x: 0, y: 0 };
 
 function rotateImage(bounds: Rectangle, degrees: number) {
     if (degrees !== 90)
@@ -1147,7 +1147,7 @@ async function parseApplicationElements(elements: Element[], informationUrl: str
         receivedDate = moment(formatDateText(receivedDateText), "D/MM/YYYY", true);
     }
 
-    // Fall back to the "Application received" date if the "Application Date" is not available.
+    // Fall back to "Application received" if "Application Date" is not available.
 
     if (!receivedDate.isValid() && applicationReceivedHeadingBounds !== undefined) {
         let receivedDateBounds = {
@@ -1543,10 +1543,12 @@ async function main() {
     
     let pdfUrls: string[] = [];
     for (let element of $("div.unityHtmlArticle p a").get()) {
-        let pdfUrl = new urlparser.URL(element.attribs.href, DevelopmentApplicationsUrl);
-        if (pdfUrl.href.toLowerCase().includes(".pdf"))
-            if (!pdfUrls.some(url => url === pdfUrl.href))  // avoid duplicates
-                pdfUrls.push(pdfUrl.href);
+        if (element.attribs.title !== undefined && element.attribs.title.toLowerCase().includes("register")) {
+            let pdfUrl = new urlparser.URL(element.attribs.href, DevelopmentApplicationsUrl);
+            if (pdfUrl.href.toLowerCase().includes(".pdf"))
+                if (!pdfUrls.some(url => url === pdfUrl.href))  // avoid duplicates
+                    pdfUrls.push(pdfUrl.href);
+        }
     }
 
     if (pdfUrls.length === 0) {
@@ -1557,18 +1559,18 @@ async function main() {
     // Select the most recent PDF.  And randomly select one other PDF (avoid processing all PDFs
     // at once because this may use too much memory, resulting in morph.io terminating the current
     // process).
-    //
-    // let selectedPdfUrls: string[] = [];
-    // selectedPdfUrls.push(pdfUrls.shift());
-    // if (pdfUrls.length > 0)
-    //     selectedPdfUrls.push(pdfUrls[getRandom(0, pdfUrls.length)]);
-    // if (getRandom(0, 2) === 0)
-    //     selectedPdfUrls.reverse();
+    
+    let selectedPdfUrls: string[] = [];
+    selectedPdfUrls.push(pdfUrls.shift());
+    if (pdfUrls.length > 0)
+        selectedPdfUrls.push(pdfUrls[getRandom(0, pdfUrls.length)]);
+    if (getRandom(0, 2) === 0)
+        selectedPdfUrls.reverse();
 
-    for (let pdfUrl of [ "https://www.tatiara.sa.gov.au/webdata/resources/files/01-1-19%20to%2031-3-19.pdf" ]) {
+    for (let pdfUrl of selectedPdfUrls) {
         console.log(`Parsing document: ${pdfUrl}`);
         let developmentApplications = await parsePdf(pdfUrl);
-        console.log(`Parsed ${developmentApplications.length} development application(s) from document: ${pdfUrl}`);
+        console.log(`Parsed ${developmentApplications.length} ${(developmentApplications.length === 1) ? "development application" : "development applications"} from document: ${pdfUrl}`);
 
         // Attempt to avoid reaching 512 MB memory usage (this will otherwise result in the
         // current process being terminated by morph.io).

@@ -362,6 +362,17 @@ function parseAddress(houseNumber: string, streetName: string, suburbName: strin
     streetName = streetName.replace(/Ü/g, "ü");
     suburbName = suburbName.replace(/Ü/g, "ü");
 
+    if (streetName.indexOf("ü") >= 0 || suburbName.indexOf("ü") >= 0)
+        if (houseNumber.indexOf("ü") < 0 && (houseNumber.indexOf("u") >= 0 || houseNumber.indexOf("U") >= 0))
+            houseNumber = houseNumber.replace(/u/gi, "ü");
+
+    if (houseNumber === "0")
+        houseNumber = "";
+    if (streetName === "0")
+        streetName = "";
+    if (suburbName === "0")
+        suburbName = "";
+
     if (!houseNumber.includes("ü")) {
         // Expand the street suffix.  For example, expand "TCE" to "TERRACE".
 
@@ -1030,12 +1041,53 @@ async function parseImage(image: any, bounds: Rectangle, language: string) {
     return elements;
 }
 
+// Formats text that likely contains a date.
+
+function formatDateText(text: string) {
+    if (text === undefined)
+        return "";
+
+    text = text.trim().substr(0, 10).trim();
+
+    let day = "";
+    let month = "";
+    let year = "";
+
+    if (text.length === 8 && text.substr(4, 2) === "20") {  // for example, "1/1/2011"
+        day = text.substr(0, 1);
+        month = text.substr(2, 1);
+        year = text.substr(4, 4);
+    } else if (text.length === 9 && text.substr(5, 2) === "20" && text.substr(2, 1) === "/") {  // for example, "01/1/2011"
+        day = text.substr(0, 2);
+        month = text.substr(3, 1);
+        year = text.substr(5, 4);
+    } else if (text.length === 9 && text.substr(5, 2) === "20") {  // for example, "1/01/2011"
+        day = text.substr(0, 1);
+        month = text.substr(2, 2);
+        year = text.substr(5, 4);
+    } else if (text.length === 10 && text.substr(6, 2) === "20") {  // for example, "01/01/2011"
+        day = text.substr(0, 2);
+        month = text.substr(3, 2);
+        year = text.substr(6, 4);
+    }
+
+    day = day.replace(/[lIi!]/g, "1");
+    month = month.replace(/[lIi!]/g, "1");
+    year = year.replace(/[lIi!]/g, "1");
+
+    if (day === "" || month === "" || year === "")
+        return text;
+
+    return `${day}/${month}/${year}`;
+}
+
 // Parses the details from the elements associated with a single development application.
 
 async function parseApplicationElements(elements: Element[], informationUrl: string, imageInfos: ImageInfo[], degrees: number) {
     let applicationNumberHeadingBounds = findTextBounds(elements, "Application No");
     let applicationDateHeadingBounds = findTextBounds(elements, "Application Date");
     let applicationReceivedHeadingBounds = findTextBounds(elements, "Application received");
+    let buildingApplicationHeadingBounds = findTextBounds(elements, "Building Application");
     let planningApprovalHeadingBounds = findTextBounds(elements, "Planning Approval");
     let privateCertifierNameHeadingBounds = findTextBounds(elements, "Private Certifier Name");
     let relevantAuthorityHeadingBounds = findTextBounds(elements, "Relevant Authority");
@@ -1078,7 +1130,7 @@ async function parseApplicationElements(elements: Element[], informationUrl: str
         return undefined;
     }
 
-    applicationNumber = applicationNumber.replace(/[IlL\[\]\|’,!\(\)\{\}]/g, "/").replace(/°/g, "0").replace(/'\//g, "1").replace(/\/\//g, "1/").replace(/201\?/g, "2017").replace(/‘/g, "").replace(/'/g, "").replace(/O/g, "0").replace(/“8$/g, "/18");  // for example, converts "17I2017" to "17/2017"
+    applicationNumber = applicationNumber.replace(/[IlL\[\]\|’,!\(\)\{\}]/g, "/").replace(/°/g, "0").replace(/'\//g, "1").replace(/\/\//g, "1/").replace(/201\?/g, "2017").replace(/‘/g, "").replace(/'/g, "").replace(/O/g, "0").replace(/[“”]([4-9])$/g, "/1$1");  // for example, converts "17I2017" to "17/2017"
     console.log(`    Found \"${applicationNumber}\".`);
 
     // Get the received date.
@@ -1091,10 +1143,21 @@ async function parseApplicationElements(elements: Element[], informationUrl: str
             width: (planningApprovalHeadingBounds === undefined) ? applicationDateHeadingBounds.width : (planningApprovalHeadingBounds.x - applicationDateHeadingBounds.x - applicationDateHeadingBounds.width),
             height: (applicationReceivedHeadingBounds === undefined) ? applicationDateHeadingBounds.height : (applicationReceivedHeadingBounds.y - applicationDateHeadingBounds.y)
         };
-
         let receivedDateText = elements.filter(element => getPercentageOfElementInRectangle(element, receivedDateBounds) > 75).map(element => element.text).join("").replace(/\s/g, "");
-        if (receivedDateText !== undefined)
-            receivedDate = moment(receivedDateText.trim(), "D/MM/YYYY", true);
+        receivedDate = moment(formatDateText(receivedDateText), "D/MM/YYYY", true);
+    }
+
+    // Fall back to the "Application received" date if the "Application Date" is not available.
+
+    if (!receivedDate.isValid() && applicationReceivedHeadingBounds !== undefined) {
+        let receivedDateBounds = {
+            x: applicationReceivedHeadingBounds.x + applicationReceivedHeadingBounds.width,
+            y: applicationReceivedHeadingBounds.y,
+            width: (planningApprovalHeadingBounds === undefined) ? applicationReceivedHeadingBounds.width : (planningApprovalHeadingBounds.x - applicationReceivedHeadingBounds.x - applicationReceivedHeadingBounds.width),
+            height: (buildingApplicationHeadingBounds === undefined) ? applicationReceivedHeadingBounds.height : (buildingApplicationHeadingBounds.y - applicationReceivedHeadingBounds.y)
+        };
+        let receivedDateText = elements.filter(element => getPercentageOfElementInRectangle(element, receivedDateBounds) > 75).map(element => element.text).join("").replace(/\s/g, "");
+        receivedDate = moment(formatDateText(receivedDateText), "D/MM/YYYY", true);
     }
 
     // Get the description.
@@ -1365,10 +1428,11 @@ async function parsePdf(url: string) {
                 if (global.gc)
                     global.gc();
             }
-            if (findStartElements(elements).length === 0)
+            let applicationCount = findStartElements(elements).length;
+            if (applicationCount === 0)
                 console.log(`    No development applications were found when the page was rotated by ${degrees} degrees.`);
             else                    
-                console.log(`    Found applications when the page was rotated by ${degrees} degrees.`);
+                console.log(`    Found ${applicationCount} ${(applicationCount === 1) ? "development application" : "development applications"} when the page was rotated by ${degrees} degrees.`);
         }
 
         // Release the memory used by the PDF now that it is no longer required (it will be
@@ -1501,7 +1565,7 @@ async function main() {
     // if (getRandom(0, 2) === 0)
     //     selectedPdfUrls.reverse();
 
-    for (let pdfUrl of pdfUrls) {
+    for (let pdfUrl of [ "https://www.tatiara.sa.gov.au/webdata/resources/files/01-1-19%20to%2031-3-19.pdf" ]) {
         console.log(`Parsing document: ${pdfUrl}`);
         let developmentApplications = await parsePdf(pdfUrl);
         console.log(`Parsed ${developmentApplications.length} development application(s) from document: ${pdfUrl}`);

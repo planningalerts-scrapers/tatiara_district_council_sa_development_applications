@@ -1353,7 +1353,7 @@ async function parsePdf(url: string) {
         let viewport = await page.getViewport(1.0);
         let operators = await page.getOperatorList();
 
-        // Indicate whether the page is rotate.
+        // Indicate whether the page is rotated.
 
         if (page.rotate !== 0)
             console.log(`Page ${pageIndex + 1} is rotated ${page.rotate}°.`);

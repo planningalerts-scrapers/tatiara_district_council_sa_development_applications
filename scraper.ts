@@ -790,7 +790,7 @@ function findTextBounds(elements: Element[], text: string) {
         } while (rightElement !== undefined && rightElements.length < 5);  // up to 5 elements
     }
 
-    // Chose the best match (if any matches were found).  Note that trimming is performed here so
+    // Choose the best match (if any matches were found).  Note that trimming is performed here so
     // that text such as "  Plan" is matched in preference to text such as "plan)" (when looking
     // for elements that match "Plan").  For an example of this problem see "200/303/07" in
     // "https://www.walkerville.sa.gov.au/webdata/resources/files/DA%20Register%20-%202007.pdf".
@@ -849,7 +849,7 @@ function findStartElements(elements: Element[]) {
             rightElement = getRightElement(elements, rightElement);
         } while (rightElement !== undefined && rightElements.length < 5);  // up to 5 elements
 
-        // Chose the best match (if any matches were found).
+        // Choose the best match (if any matches were found).
 
         if (matches.length > 0) {
             let bestMatch = matches.reduce((previous, current) =>
@@ -1448,7 +1448,7 @@ async function parsePdf(url: string) {
 
         elements = elements.filter(element => element.height > 2);
 
-        // Sort the cells by approximate Y co-ordinate and then by X co-ordinate.
+        // Sort the elements by approximate Y co-ordinate and then by X co-ordinate.
 
         let elementComparer = (a, b) => (Math.abs(a.y - b.y) < 3 * Tolerance) ? ((a.x > b.x) ? 1 : ((a.x < b.x) ? -1 : 0)) : ((a.y > b.y) ? 1 : -1);
         elements.sort(elementComparer);

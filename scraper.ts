@@ -27,7 +27,7 @@ import didYouMean, * as didyoumean from "didyoumean2";
 
 sqlite3.verbose();
 
-const DevelopmentApplicationsUrl = "https://www.tatiara.sa.gov.au/page.aspx?u=127";
+const DevelopmentApplicationsUrl = "https://www.tatiara.sa.gov.au/council-services/developmentplanning";
 const CommentUrl = "mailto:office@tatiara.sa.gov.au";
 
 declare const global: any;
@@ -77,7 +77,7 @@ async function insertRow(database, developmentApplication) {
                 console.error(error);
                 reject(error);
             } else {
-                console.log(`    Saved: application \"${developmentApplication.applicationNumber}\" with address \"${developmentApplication.address}\", description \"${developmentApplication.description}\", legal description \"${developmentApplication.legalDescription}\" and received date \"${developmentApplication.receivedDate}\" into the database.`);
+                console.log(`    Saved application \"${developmentApplication.applicationNumber}\" with address \"${developmentApplication.address}\", description \"${developmentApplication.description}\", legal description \"${developmentApplication.legalDescription}\" and received date \"${developmentApplication.receivedDate}\" to the database.`);
                 sqlStatement.finalize();  // releases any locks
                 resolve(row);
             }
@@ -1540,7 +1540,7 @@ async function main() {
     
     let pdfUrls: string[] = [];
     for (let element of $("div.unityHtmlArticle p a").get()) {
-        if (element.attribs.title !== undefined && element.attribs.title.toLowerCase().includes("register")) {
+        if ($(element).text().toLowerCase().includes("register")) {
             let pdfUrl = new urlparser.URL(element.attribs.href, DevelopmentApplicationsUrl);
             if (pdfUrl.href.toLowerCase().includes(".pdf"))
                 if (!pdfUrls.some(url => url === pdfUrl.href))  // avoid duplicates
@@ -1552,6 +1552,7 @@ async function main() {
         console.log("No PDF URLs were found on the page.");
         return;
     }
+    console.log(`Found ${pdfUrls.length} PDF URL(s).`);
 
     // Select the most recent PDF.  And randomly select one other PDF (avoid processing all PDFs
     // at once because this may use too much memory, resulting in morph.io terminating the current
